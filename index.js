@@ -26,17 +26,17 @@ async function connectToDatabase() {
     try {
         await mongoClient.connect();
         console.log("Successfully connected to MongoDB Atlas!");
-        const db = mongoClient.db("drednot_economy"); // You can name your database anything
+        const db = mongoClient.db("drednot_economy");
         economyCollection = db.collection("players");
         verificationsCollection = db.collection("verifications");
     } catch (error) {
         console.error("Failed to connect to MongoDB", error);
-        process.exit(1); // Exit if we can't connect to the DB
+        process.exit(1);
     }
 }
 
 // =========================================================================
-// --- ECONOMY LOGIC (Now uses MongoDB) ---
+// --- ECONOMY LOGIC (Using MongoDB) ---
 // =========================================================================
 const CURRENCY_NAME = 'Bits';
 const STARTING_BALANCE = 30;
@@ -61,7 +61,7 @@ async function getAccount(identifier) {
 async function createNewAccount(drednotName) {
     const lowerName = drednotName.toLowerCase();
     const newAccount = {
-        _id: lowerName, // Use Drednot name as the unique ID
+        _id: lowerName,
         balance: STARTING_BALANCE,
         discordId: null,
         lastWork: null,
@@ -90,38 +90,55 @@ async function handleWorkCommand(account) {
 }
 
 // =========================================================================
-// --- Discord Bot Logic (Updated for DB) ---
+// --- Discord Bot Logic (Corrected Logic Flow) ---
 // =========================================================================
 client.on('ready', () => console.log(`Discord bot logged in as ${client.user.tag}!`));
 
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
-    const { commandName, user, options } = interaction;
-    await interaction.deferReply({ ephemeral: true });
 
+    const { commandName, user, options } = interaction;
+    const discordId = user.id;
+
+    // --- THIS IS THE FIX ---
+    // Handle the 'link' command FIRST, as it's for un-linked users.
     if (commandName === 'link') {
-        const existingLink = await getAccount(user.id);
-        if (existingLink) return interaction.editReply({ content: `Your Discord account is already linked to the Drednot account **${existingLink._id}**!` });
+        // We defer here because linking is a special case
+        await interaction.deferReply({ ephemeral: true });
+
+        const existingLink = await getAccount(discordId);
+        if (existingLink) {
+            return interaction.editReply({ content: `Your Discord account is already linked to the Drednot account **${existingLink._id}**!` });
+        }
         
         const drednotNameToLink = options.getString('drednot_name');
         const targetAccount = await getAccount(drednotNameToLink);
-        if (targetAccount && targetAccount.discordId) return interaction.editReply({ content: `Sorry, the Drednot name **${drednotNameToLink}** is already linked to another Discord user.` });
+        if (targetAccount && targetAccount.discordId) {
+            return interaction.editReply({ content: `Sorry, the Drednot name **${drednotNameToLink}** is already linked to another Discord user.` });
+        }
         
         const codeWords = ['apple', 'boat', 'cat', 'dog', 'earth', 'fish', 'grape', 'house'];
         const verificationCode = `${codeWords[Math.floor(Math.random() * codeWords.length)]}-${Math.floor(100 + Math.random() * 900)}`;
         
-        await verificationsCollection.insertOne({ _id: verificationCode, discordId: user.id, drednotName: drednotNameToLink, timestamp: Date.now() });
+        // Store the pending verification
+        await verificationsCollection.insertOne({ _id: verificationCode, discordId, drednotName: drednotNameToLink, timestamp: Date.now() });
         
         const replyContent = `**Verification Started!**\nTo prove you own the Drednot account **${drednotNameToLink}**, please go into the game and type:\n\`\`\`!verify ${verificationCode}\`\`\`\nThis code will expire in 5 minutes.`;
         await interaction.editReply({ content: replyContent });
+        return; // End the function here since we've handled the command.
+    }
+    
+    // --- For all OTHER commands, we check for a link first ---
+    const account = await getAccount(discordId);
+    if (!account) {
+        await interaction.reply({ content: 'Your Discord account is not linked. Please use `/link YourDrednotName` to begin the verification process.', ephemeral: true });
         return;
     }
 
-    const account = await getAccount(user.id);
-    if (!account) {
-        return interaction.editReply({ content: 'Your Discord account is not linked. Please use `/link YourDrednotName` to begin the verification process.' });
-    }
-
+    // Defer the reply for all other commands now that we know the user is linked
+    await interaction.deferReply({ ephemeral: true });
+    
+    // Handle commands for linked users
     if (commandName === 'balance') {
         await interaction.editReply({ content: `Your linked account **(${account._id})** has a balance of: ${account.balance} ${CURRENCY_NAME}.` });
     } else if (commandName === 'work') {
@@ -131,7 +148,7 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 // =========================================================================
-// --- Web Server Logic (Updated for DB) ---
+// --- Web Server Logic (for the game) ---
 // =========================================================================
 app.get("/", (req, res) => res.send("Bot is alive and ready!"));
 
@@ -186,8 +203,8 @@ app.post('/command', async (req, res) => {
 // --- Start Everything ---
 async function startServer() {
     await connectToDatabase();
-    client.login(process.env.DISCORD_TOKEN);
-    app.listen(port, () => console.log(`Web server is listening on port ${port}`));
+    await client.login(process.env.DISCORD_TOKEN);
+    app.listen(port, () => console.log(`Web server listening on port ${port}`));
 }
 
 startServer();
