@@ -1,18 +1,16 @@
 {
-  "name": "nodejs",
+  "name": "drednot-bot-render",
   "version": "1.0.0",
-  "description": "",
+  "description": "Discord and Web server for the Drednot Economy Bot, hosted on Render.",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node index.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
-    "@types/node": "^22.13.11",
-    "discord.js": "^14.20.0",
-    "dotenv": "^16.5.0",
-    "express": "^5.1.0"
+    "discord.js": "^14.15.3",
+    "express": "^4.19.2"
+  },
+  "engines": {
+    "node": "18.x"
   }
 }
