@@ -6,7 +6,6 @@ const clientId = process.env.DISCORD_CLIENT_ID;
 if (!token || !clientId) throw new Error("Missing secrets!");
 
 const commands = [
-    // All commands are the same, EXCEPT /next and /back are now removed.
     { name: 'link', description: 'Links your Discord account to your Drednot.io account.', options: [{ name: 'drednot_name', type: 3, description: 'Your exact in-game name', required: true }] },
     { name: 'balance', description: 'Check your in-game balance.' },
     { name: 'work', description: 'Work to earn bits.' },
