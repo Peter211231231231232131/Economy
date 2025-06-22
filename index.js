@@ -102,8 +102,6 @@ client.on('interactionCreate', async (interaction) => {
         else if (interaction.isButton()) await handleButtonInteraction(interaction);
     } catch (error) {
         console.error("Error handling interaction:", error);
-        // This robust error handler prevents the bot from crashing if it can't reply to an
-        // already expired or acknowledged interaction (common on services with cold starts).
         try {
             const errorReply = { content: 'An unexpected error occurred!', flags: MessageFlags.Ephemeral, components: [] };
             if (interaction.replied || interaction.deferred) {
@@ -146,7 +144,32 @@ async function handleSlashCommand(interaction) {
         case 'smelt': itemName = options.getString('ore_name'); quantity = options.getInteger('quantity'); result = await handleSmelt(account, itemName, quantity); await interaction.editReply({ content: result.message }); break;
         case 'pay': const recipientUser = options.getUser('user'); amount = options.getInteger('amount'); if (recipientUser.bot) return interaction.editReply({ content: "You can't pay bots." }); const recipientAccount = await getAccount(recipientUser.id); if (!recipientAccount) return interaction.editReply({ content: `That user isn't linked to a Drednot account yet.` }); result = await handlePay(account, recipientAccount, amount); await interaction.editReply({ content: result.message }); break;
         case 'marketsell': itemName = options.getString('item_name'); quantity = options.getInteger('quantity'); price = options.getNumber('price'); const itemIdToSell = getItemIdByName(itemName); if (!itemIdToSell) return interaction.editReply({ content: 'Invalid item name.' }); if (quantity <= 0 || price <= 0) return interaction.editReply({ content: 'Quantity and price must be positive.' }); if ((account.inventory[itemIdToSell] || 0) < quantity) return interaction.editReply({ content: 'You do not have enough of that item to sell.' }); try { await modifyInventory(account._id, itemIdToSell, -quantity); const newListingId = await findNextAvailableListingId(marketCollection); await marketCollection.insertOne({ listingId: newListingId, sellerId: account._id, sellerName: account._id, itemId: itemIdToSell, quantity, price }); await interaction.editReply({ content: `You listed ${quantity}x ${ITEMS[itemIdToSell].name} for sale. Listing ID: **${newListingId}**` }); } catch (error) { if (error.code === 11000) { await modifyInventory(account._id, itemIdToSell, quantity); await interaction.editReply({ content: 'The market is busy and that listing ID was just taken. Your items have been returned. Please try again.' }); } else { console.error("Failed to list item:", error); await modifyInventory(account._id, itemIdToSell, quantity); await interaction.editReply({ content: 'An unexpected error occurred while listing your item. Please try again.' }); } } break;
-        case 'marketbuy': listingId = options.getInteger('listing_id'); const listingToBuy = await marketCollection.findOne({ listingId: listingId }); if (!listingToBuy) return interaction.editReply({ content: 'Invalid listing ID.' }); if (listingToBuy.sellerId === account._id) return interaction.editReply({ content: "You can't buy your own listing." }); const totalCost = listingToBuy.quantity * listingToBuy.price; if (account.balance < totalCost) return interaction.editReply({ content: `You can't afford this. It costs ${totalCost} ${CURRENCY_NAME}.` }); await updateAccount(account._id, { balance: account.balance - totalCost }); await modifyInventory(account._id, listingToBuy.itemId, listingToBuy.quantity); const sellerAccount = await getAccount(listingToBuy.sellerId); if (sellerAccount) { const earnings = totalCost * (1 - MARKET_TAX_RATE); await economyCollection.updateOne({ _id: sellerAccount._id }, { $inc: { balance: earnings } }); } await marketCollection.deleteOne({ _id: listingToBuy._id }); await interaction.editReply({ content: `You bought ${listingToBuy.quantity}x ${ITEMS[listingToBuy.itemId].name}!` }); break;
+        case 'marketbuy': 
+            listingId = options.getInteger('listing_id');
+            const listingToBuy = await marketCollection.findOne({ listingId: listingId });
+            if (!listingToBuy) return interaction.editReply({ content: 'Invalid listing ID.' });
+            if (listingToBuy.sellerId === account._id) return interaction.editReply({ content: "You can't buy your own listing." });
+            
+            // --- FIX START ---
+            const totalCost = Math.round(listingToBuy.quantity * listingToBuy.price);
+            // --- FIX END ---
+            
+            if (account.balance < totalCost) return interaction.editReply({ content: `You can't afford this. It costs ${totalCost} ${CURRENCY_NAME}.` });
+            
+            await updateAccount(account._id, { balance: account.balance - totalCost });
+            await modifyInventory(account._id, listingToBuy.itemId, listingToBuy.quantity);
+            const sellerAccount = await getAccount(listingToBuy.sellerId);
+            
+            if (sellerAccount) {
+                // --- FIX START ---
+                const earnings = Math.round(totalCost * (1 - MARKET_TAX_RATE));
+                // --- FIX END ---
+                await economyCollection.updateOne({ _id: sellerAccount._id }, { $inc: { balance: earnings } });
+            }
+            
+            await marketCollection.deleteOne({ _id: listingToBuy._id });
+            await interaction.editReply({ content: `You bought ${listingToBuy.quantity}x ${ITEMS[listingToBuy.itemId].name}!` });
+            break;
         case 'marketcancel': const listingIdToCancel = options.getInteger('listing_id'); const listingToCancel = await marketCollection.findOne({ listingId: listingIdToCancel }); if (!listingToCancel || listingToCancel.sellerId !== account._id) return interaction.editReply({ content: 'This is not your listing or it does not exist.' }); await modifyInventory(account._id, listingToCancel.itemId, listingToCancel.quantity); await marketCollection.deleteOne({ _id: listingToCancel._id }); await interaction.editReply({ content: `You cancelled your listing for ${listingToCancel.quantity}x ${ITEMS[listingToCancel.itemId].name}.` }); break;
         case 'crateoshopbuy':
             const crateNameToOpenSlash = options.getString('crate_name');
@@ -186,7 +209,6 @@ app.post('/command', async (req, res) => {
     let account = await getAccount(username);
     if (!account) { 
         account = await createNewAccount(username); 
-        // This is the new, better welcome message
         const welcomeMessage = [
             `===== WELCOME TO ECONOMY SEASON 2! =====`,
             `Due to an unexpected issue, all data has been reset for a fresh start. We apologize for any inconvenience.`,
@@ -215,7 +237,34 @@ app.post('/command', async (req, res) => {
         case 'smelt': if (args.length < 2) { responseMessage = "Usage: !smelt <ore name> <quantity>"; } else { const oreName = args.slice(0, -1).join(' '); const quantity = parseInt(args[args.length - 1]); result = await handleSmelt(account, oreName, quantity); responseMessage = result.message; } break;
         case 'pay': if (args.length < 2) { responseMessage = "Usage: !pay <username> <amount>"; } else { const amountToPay = parseInt(args[args.length - 1]); const recipientName = args.slice(0, -1).join(' '); const recipientAccount = await getAccount(recipientName); if (!recipientAccount) { responseMessage = `Could not find a player named "${recipientName}".`; } else { result = await handlePay(account, recipientAccount, amountToPay); responseMessage = result.message.replace(/\*/g, ''); } } break;
         case 'ms': case 'marketsell': if (args.length < 3) { responseMessage = "Usage: !marketsell [item] [qty] [price]"; } else { const itemName = args.slice(0, -2).join(' '); const qty = parseInt(args[args.length - 2]); const price = parseFloat(args[args.length - 1]); const itemId = getItemIdByName(itemName); if (!itemId || isNaN(qty) || isNaN(price) || qty <= 0 || price <= 0) { responseMessage = "Invalid format."; } else if ((account.inventory[itemId] || 0) < qty) { responseMessage = "You don't have enough of that item."; } else { try { await modifyInventory(account._id, itemId, -qty); const newListingId = await findNextAvailableListingId(marketCollection); await marketCollection.insertOne({ listingId: newListingId, sellerId: account._id, sellerName: account._id, itemId, quantity: qty, price }); responseMessage = `Listed ${qty}x ${ITEMS[itemId].name}. ID: ${newListingId}`; } catch (error) { if (error.code === 11000) { await modifyInventory(account._id, itemId, qty); responseMessage = "Market is busy, ID was taken. Items returned. Try again."; } else { console.error("Failed to list item via in-game command:", error); await modifyInventory(account._id, itemId, qty); responseMessage = "An unexpected error occurred. Items returned."; } } } } break;
-        case 'mb': case 'marketbuy': if (args.length < 1) { responseMessage = "Usage: !marketbuy [listing_id]"; } else { const listingId = parseInt(args[0]); if(isNaN(listingId)) { responseMessage = "Listing ID must be a number."; break; } const listingToBuy = await marketCollection.findOne({ listingId: listingId }); if (!listingToBuy) { responseMessage = 'Invalid listing ID.'; break; } const totalCost = listingToBuy.quantity * listingToBuy.price; if (listingToBuy.sellerId === account._id) { responseMessage = "You can't buy your own listing."; } else if (account.balance < totalCost) { responseMessage = "You can't afford this."; } else { await updateAccount(account._id, { balance: account.balance - totalCost }); await modifyInventory(account._id, listingToBuy.itemId, listingToBuy.quantity); const sellerAccount = await getAccount(listingToBuy.sellerId); if (sellerAccount) await updateAccount(sellerAccount._id, { balance: sellerAccount.balance + (totalCost * (1 - MARKET_TAX_RATE)) }); await marketCollection.deleteOne({ _id: listingToBuy._id }); responseMessage = `You bought ${listingToBuy.quantity}x ${ITEMS[listingToBuy.itemId].name}!`; } } break;
+        case 'mb': case 'marketbuy':
+            if (args.length < 1) { responseMessage = "Usage: !marketbuy [listing_id]"; break; }
+            const listingId = parseInt(args[0]);
+            if(isNaN(listingId)) { responseMessage = "Listing ID must be a number."; break; }
+            const listingToBuy = await marketCollection.findOne({ listingId: listingId });
+            if (!listingToBuy) { responseMessage = 'Invalid listing ID.'; break; }
+            if (listingToBuy.sellerId === account._id) { responseMessage = "You can't buy your own listing."; break; }
+            
+            // --- FIX START ---
+            const totalCost = Math.round(listingToBuy.quantity * listingToBuy.price);
+            // --- FIX END ---
+            
+            if (account.balance < totalCost) { responseMessage = "You can't afford this."; } else {
+                await updateAccount(account._id, { balance: account.balance - totalCost });
+                await modifyInventory(account._id, listingToBuy.itemId, listingToBuy.quantity);
+                const sellerAccount = await getAccount(listingToBuy.sellerId);
+                
+                if (sellerAccount) {
+                    // --- FIX START ---
+                    const earnings = Math.round(totalCost * (1 - MARKET_TAX_RATE));
+                    await updateAccount(sellerAccount._id, { balance: sellerAccount.balance + earnings });
+                    // --- FIX END ---
+                }
+                
+                await marketCollection.deleteOne({ _id: listingToBuy._id });
+                responseMessage = `You bought ${listingToBuy.quantity}x ${ITEMS[listingToBuy.itemId].name}!`;
+            }
+            break;
         case 'mc': case 'marketcancel': if (args.length < 1) { responseMessage = "Usage: !marketcancel [listing_id]"; } else { const listingId = parseInt(args[0]); if(isNaN(listingId)) { responseMessage = "Listing ID must be a number."; break; } const listingToCancel = await marketCollection.findOne({ listingId: listingId }); if (!listingToCancel || listingToCancel.sellerId !== account._id) { responseMessage = "This is not your listing."; } else { await modifyInventory(account._id, listingToCancel.itemId, listingToCancel.quantity); await marketCollection.deleteOne({ _id: listingToCancel._id }); responseMessage = `Cancelled your listing for ${listingToCancel.quantity}x ${ITEMS[listingToCancel.itemId].name}.`; } } break;
         case 'cs': result = await handleCrateShop(); if (!result.success) { responseMessage = result.lines[0]; break; } title = "The Collector's Crates"; const csPage = getPaginatedResponse(identifier, 'crateshop', result.lines, title, 0); responseMessage = csPage.game.map(line => cleanText(line)); break;
         case 'csb': case 'crateshopbuy':
@@ -228,9 +277,9 @@ app.post('/command', async (req, res) => {
             const listing = await lootboxCollection.findOne({ lootboxId: crateId });
             if (!listing) { responseMessage = `The Collector is not selling any "${crateNameToOpen}" right now.`; break; }
             if (listing.quantity < amountToOpen) { responseMessage = `The Collector only has ${listing.quantity} of those crates in stock.`; break; }
-            const totalCost = listing.price * amountToOpen;
-            if (account.balance < totalCost) { responseMessage = `You can't afford that. It costs ${totalCost} ${CURRENCY_NAME} to open ${amountToOpen}.`; break; }
-            await updateAccount(account._id, { balance: account.balance - totalCost });
+            const totalCostCrate = listing.price * amountToOpen;
+            if (account.balance < totalCostCrate) { responseMessage = `You can't afford that. It costs ${totalCostCrate} ${CURRENCY_NAME} to open ${amountToOpen}.`; break; }
+            await updateAccount(account._id, { balance: account.balance - totalCostCrate });
             let totalRewards = {};
             for (let i = 0; i < amountToOpen; i++) { const reward = openLootbox(listing.lootboxId); if (reward.type === 'bits') { totalRewards.bits = (totalRewards.bits || 0) + reward.amount; } else { totalRewards[reward.id] = (totalRewards[reward.id] || 0) + reward.amount; } }
             let rewardMessages = [];
