@@ -17,19 +17,9 @@ const mongoUri = process.env.MONGO_URI;
 if (!mongoUri) throw new Error("CRITICAL: MONGO_URI not found!");
 const mongoClient = new MongoClient(mongoUri);
 let economyCollection, verificationsCollection, marketCollection;
+let userPaginationData = {};
 
-let userPaginationData = {}; // Stores { identifier: { lines: [], currentPage: 0, type: '', title: '' } }
-
-async function connectToDatabase() {
-    try {
-        await mongoClient.connect();
-        console.log("Successfully connected to MongoDB Atlas!");
-        const db = mongoClient.db("drednot_economy");
-        economyCollection = db.collection("players");
-        verificationsCollection = db.collection("verifications");
-        marketCollection = db.collection("market_listings");
-    } catch (error) { console.error("DB connection failed", error); process.exit(1); }
-}
+async function connectToDatabase() { try { await mongoClient.connect(); console.log("Connected to MongoDB!"); const db = mongoClient.db("drednot_economy"); economyCollection = db.collection("players"); verificationsCollection = db.collection("verifications"); marketCollection = db.collection("market_listings"); } catch (error) { console.error("DB connection failed", error); process.exit(1); } }
 
 // =========================================================================
 // --- ECONOMY DEFINITIONS ---
@@ -63,7 +53,7 @@ function formatDuration(seconds) { if (seconds < 60) return `${Math.ceil(seconds
 function getPaginatedResponse(identifier, type, allLines, title, pageChange = 0) { const linesPerPage = 5; if (!userPaginationData[identifier] || userPaginationData[identifier].type !== type) { userPaginationData[identifier] = { lines: allLines, currentPage: 0, type, title }; } const session = userPaginationData[identifier]; session.currentPage += pageChange; const totalPages = Math.ceil(session.lines.length / linesPerPage); if (session.currentPage >= totalPages && totalPages > 0) session.currentPage = totalPages - 1; if (session.currentPage < 0) session.currentPage = 0; const startIndex = session.currentPage * linesPerPage; const linesForPage = session.lines.slice(startIndex, startIndex + linesPerPage); const footer = `Page ${session.currentPage + 1}/${totalPages}.`; const discordContent = `**--- ${title} (Page ${session.currentPage + 1}/${totalPages}) ---**\n${linesForPage.length > 0 ? linesForPage.join('\n') : "No items on this page."}`; const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`paginate_back_${identifier}`).setLabel('⬅️ Previous').setStyle(ButtonStyle.Secondary).setDisabled(session.currentPage === 0), new ButtonBuilder().setCustomId(`paginate_next_${identifier}`).setLabel('Next ➡️').setStyle(ButtonStyle.Secondary).setDisabled(session.currentPage >= totalPages - 1)); const gameContent = [`--- ${title} ---`, ...linesForPage, footer]; return { discord: { content: discordContent, components: [row] }, game: gameContent }; }
 async function handleWork(account) { const now = Date.now(); const cooldown = WORK_COOLDOWN_MINUTES * 60 * 1000; if (account.lastWork && (now - account.lastWork) < cooldown) return { success: false, message: `You are on cooldown. Wait ${formatDuration((cooldown - (now - account.lastWork)) / 1000)}.` }; let baseEarnings = Math.floor(Math.random() * (WORK_REWARD_MAX - WORK_REWARD_MIN + 1)) + WORK_REWARD_MIN; let bonusFlat = 0, bonusPercent = 0.0; for (const itemId in account.inventory) { const itemDef = ITEMS[itemId]; if (itemDef?.type === 'tool' && itemDef.effects) { const qty = account.inventory[itemId]; if (itemDef.effects.work_bonus_flat) bonusFlat += itemDef.effects.work_bonus_flat * qty; if (itemDef.effects.work_bonus_percent) bonusPercent += itemDef.effects.work_bonus_percent * qty; } } const bonusAmount = Math.floor(baseEarnings * bonusPercent) + bonusFlat; const totalEarnings = baseEarnings + bonusAmount; await updateAccount(account._id, { balance: account.balance + totalEarnings, lastWork: now }); let bonusText = bonusAmount > 0 ? ` (+${bonusAmount} bonus)` : ''; return { success: true, message: `You earned ${totalEarnings} ${CURRENCY_NAME}${bonusText}! New balance is ${account.balance + totalEarnings}.` }; }
 async function handleGather(account) { const now = Date.now(); const cooldown = GATHER_COOLDOWN_MINUTES * 60 * 1000; if (account.lastGather && (now - account.lastGather) < cooldown) return { success: false, message: `You are tired. Wait ${formatDuration((cooldown - (now - account.lastGather)) / 1000)}.` }; const basketCount = account.inventory['gathering_basket'] || 0; const maxTypes = MAX_GATHER_TYPES_BASE + basketCount; let gatheredItems = []; let updates = {}; const shuffledOres = Object.keys(GATHER_TABLE).sort(() => 0.5 - Math.random()); for (const itemId of shuffledOres) { if (gatheredItems.length >= maxTypes) break; if (Math.random() < GATHER_TABLE[itemId].baseChance) { let qty = Math.floor(Math.random() * (GATHER_TABLE[itemId].maxQty - GATHER_TABLE[itemId].minQty + 1)) + GATHER_TABLE[itemId].minQty; for (let i = 0; i < basketCount; i++) if (Math.random() < 0.5) qty++; updates[`inventory.${itemId}`] = qty; gatheredItems.push(`${ITEMS[itemId].emoji} ${qty}x ${ITEMS[itemId].name}`); } } await economyCollection.updateOne({ _id: account._id }, { $inc: updates, $set: { lastGather: now } }); if (gatheredItems.length === 0) return { success: true, message: 'You searched but found nothing of value.' }; return { success: true, message: `You gathered: ${gatheredItems.join(', ')}` }; }
-function handleInventory(account) { if (!account.inventory || Object.keys(account.inventory).length === 0) return 'Your inventory is empty.'; let invList = ['🎒 **Your Inventory:**']; for (const itemId in account.inventory) { if (account.inventory[itemId] > 0) invList.push(`> ${ITEMS[itemId]?.emoji || '❓'} ${account.inventory[itemId]}x ${ITEMS[itemId]?.name || itemId}`); } return invList.length > 1 ? invList.join('\n') : 'Your inventory is empty.'; }
+function handleInventory(account, filter = null) { if (!account.inventory || Object.keys(account.inventory).length === 0) return 'Your inventory is empty.'; let invList = []; const filterLower = filter ? filter.toLowerCase() : null; for (const itemId in account.inventory) { if (account.inventory[itemId] > 0) { const item = ITEMS[itemId]; if (!item) continue; if (!filterLower || item.name.toLowerCase().includes(filterLower)) { invList.push(`> ${item.emoji || '❓'} ${account.inventory[itemId]}x ${item.name}`); } } } if (invList.length === 0) return `You have no items matching "${filter}".`; const header = filter ? `🎒 **Inventory (Filtered by: ${filter})**` : '🎒 **Your Inventory:**'; return [header, ...invList].join('\n'); }
 function handleRecipes() { let recipeList = ['📜 **Available Recipes:**']; for (const itemId in ITEMS) { if (ITEMS[itemId].craftable) { const recipeParts = Object.entries(ITEMS[itemId].recipe).map(([resId, qty]) => `${ITEMS[resId].emoji} ${qty}x ${ITEMS[resId].name}`); recipeList.push(`> ${ITEMS[itemId].emoji} **${ITEMS[itemId].name}**: Requires ${recipeParts.join(', ')}`); } } return recipeList.length > 1 ? recipeList.join('\n') : 'There are no craftable items yet.'; }
 async function handleCraft(account, itemName) { const itemToCraftId = getItemIdByName(itemName); if (!itemToCraftId || !ITEMS[itemToCraftId].craftable) return `"${itemName}" is not a valid, craftable item. Check \`/recipes\`.`; const recipe = ITEMS[itemToCraftId].recipe; for (const resId in recipe) { const requiredQty = recipe[resId]; const playerQty = account.inventory[resId] || 0; if (playerQty < requiredQty) return `You don't have enough resources! You need ${requiredQty - playerQty} more ${ITEMS[resId].name}.`; } for (const resId in recipe) await modifyInventory(account._id, resId, -recipe[resId]); await modifyInventory(account._id, itemToCraftId, 1); return `You successfully crafted 1x ${ITEMS[itemToCraftId].name}!`; }
 async function handleDaily(account) { const now = new Date(); const lastDaily = account.lastDaily ? new Date(account.lastDaily) : null; if (lastDaily && now.toDateString() === lastDaily.toDateString()) return { success: false, message: "You have already claimed your daily reward today." }; await updateAccount(account._id, { balance: account.balance + DAILY_REWARD, lastDaily: now }); return { success: true, message: `You claimed your daily ${DAILY_REWARD} ${CURRENCY_NAME}! Your new balance is ${account.balance + DAILY_REWARD}.` }; }
@@ -72,8 +62,8 @@ async function handleSlots(account, amount) { const now = Date.now(); const cool
 async function handleLeaderboard() { const topPlayers = await economyCollection.find().sort({ balance: -1 }).limit(50).toArray(); if (topPlayers.length === 0) return ["The leaderboard is empty!"]; return topPlayers.map((player, index) => `${index + 1}. **${player._id}** - ${player.balance} ${CURRENCY_NAME}`); }
 function handleTimers(account) { const now = Date.now(); const timers = []; timers.push(`💪 Work: ${(account.lastWork && (now - account.lastWork) < WORK_COOLDOWN_MINUTES * 60 * 1000) ? formatDuration(((account.lastWork + WORK_COOLDOWN_MINUTES * 60 * 1000) - now) / 1000) : 'Ready!'}`); timers.push(`⛏️ Gather: ${(account.lastGather && (now - account.lastGather) < GATHER_COOLDOWN_MINUTES * 60 * 1000) ? formatDuration(((account.lastGather + GATHER_COOLDOWN_MINUTES * 60 * 1000) - now) / 1000) : 'Ready!'}`); const nextDaily = new Date(); nextDaily.setUTCDate(nextDaily.getUTCDate() + 1); nextDaily.setUTCHours(0, 0, 0, 0); timers.push(`📅 Daily: ${account.lastDaily && new Date(account.lastDaily).getUTCDate() === new Date().getUTCDate() ? formatDuration((nextDaily - now) / 1000) : 'Ready!'}`); const slotsTimeLeft = (account.lastSlots || 0) + SLOTS_COOLDOWN_SECONDS * 1000 - now; if (slotsTimeLeft > 0) timers.push(`🎰 Slots: ${formatDuration(slotsTimeLeft / 1000)}`); if (account.smelting && account.smelting.finishTime > now) timers.push(`🔥 Smelting: ${formatDuration((account.smelting.finishTime - now) / 1000)}`); return [`**Personal Cooldowns for ${account._id}:**`].concat(timers.map(t => `> ${t}`)); }
 async function handleSmelt(account, oreName, quantity) { const smelterCount = account.inventory['smelter'] || 0; if (smelterCount < 1) return { success: false, message: "You need to craft a 🔥 Smelter first!" }; if (account.smelting && account.smelting.finishTime > Date.now()) return { success: false, message: `You are already smelting! Wait for it to finish.` }; const oreId = getItemIdByName(oreName); const ingotId = SMELTABLE_ORES[oreId]; if (!ingotId) return { success: false, message: `You can't smelt that. Valid ores: Iron Ore, Copper Ore.` }; if (isNaN(quantity) || quantity <= 0) return { success: false, message: "Invalid quantity." }; if ((account.inventory[oreId] || 0) < quantity) return { success: false, message: `You don't have enough ${ITEMS[oreId].name}.` }; const coalNeeded = quantity * SMELT_COAL_COST_PER_ORE; if ((account.inventory['coal'] || 0) < coalNeeded) return { success: false, message: `You don't have enough coal. You need ${coalNeeded} ⚫ Coal.` }; await modifyInventory(account._id, oreId, -quantity); await modifyInventory(account._id, 'coal', -coalNeeded); const timePerOre = (SMELT_COOLDOWN_SECONDS_PER_ORE / smelterCount) * 1000; const totalTime = timePerOre * quantity; const finishTime = Date.now() + totalTime; await updateAccount(account._id, { smelting: { ingotId, quantity, finishTime } }); return { success: true, message: `You begin smelting ${quantity}x ${ITEMS[oreId].name}. It will take ${formatDuration(totalTime/1000)}.` }; }
-async function handleMarket() { const listings = await marketCollection.find().sort({ _id: -1 }).toArray(); if (listings.length === 0) return ["The market is empty."]; return listings.map(l => `(ID: \`${l._id.toString().slice(-6)}\`) ${ITEMS[l.itemId]?.emoji || '📦'} **${l.quantity}x** ${ITEMS[l.itemId].name} @ **${l.price}** ${CURRENCY_NAME} ea. by *${l.sellerName}*`); }
 async function handlePay(senderAccount, recipientAccount, amount) { if (isNaN(amount) || amount <= 0) return { success: false, message: "Please provide a valid, positive amount to pay." }; if (senderAccount.balance < amount) return { success: false, message: `You don't have enough Bits. You only have ${senderAccount.balance}.`}; if (senderAccount._id === recipientAccount._id) return { success: false, message: "You can't pay yourself!" }; await updateAccount(senderAccount._id, { balance: senderAccount.balance - amount }); await updateAccount(recipientAccount._id, { balance: recipientAccount.balance + amount }); return { success: true, message: `You paid ${amount} ${CURRENCY_NAME} to **${recipientAccount._id}**.` }; }
+async function handleMarket(filter = null) { let query = {}; if (filter) { const itemIds = Object.keys(ITEMS).filter(k => ITEMS[k].name.toLowerCase().includes(filter.toLowerCase())); if (itemIds.length > 0) query = { itemId: { $in: itemIds } }; else return [`No market listings found matching "${filter}".`]; } const listings = await marketCollection.find(query).sort({ _id: -1 }).toArray(); if (listings.length === 0) return [`No market listings found matching "${filter}".`]; return listings.map(l => `(ID: \`${l._id.toString().slice(-6)}\`) ${ITEMS[l.itemId]?.emoji || '📦'} **${l.quantity}x** ${ITEMS[l.itemId].name} @ **${l.price}** ${CURRENCY_NAME} ea. by *${l.sellerName}*`); }
 
 async function processVendorTicks() { console.log("Processing vendor ticks..."); for (const vendor of VENDORS) { if (Math.random() < vendor.chance) { const itemsToSell = [...vendor.stock].sort(() => 0.5 - Math.random()).slice(0, 3); for (const item of itemsToSell) { await marketCollection.insertOne({ sellerId: vendor.sellerId, sellerName: vendor.name, itemId: item.itemId, quantity: item.quantity, price: item.price }); console.log(`${vendor.name} listed ${item.quantity}x ${ITEMS[item.itemId].name}!`); } } } }
 async function processFinishedSmelting() { const now = Date.now(); const finishedSmelts = await economyCollection.find({ "smelting.finishTime": { $ne: null, $lte: now } }).toArray(); for (const account of finishedSmelts) { const { ingotId, quantity } = account.smelting; await modifyInventory(account._id, ingotId, quantity); await updateAccount(account._id, { smelting: null }); try { const user = await client.users.fetch(account.discordId); user.send(`✅ Your smelting is complete! You received ${quantity}x ${ITEMS[ingotId].name}.`); } catch (e) { console.log(`Could not DM ${account._id} about finished smelt.`); } } }
@@ -82,7 +72,6 @@ async function processFinishedSmelting() { const now = Date.now(); const finishe
 // --- DISCORD BOT LOGIC ---
 // =========================================================================
 client.on('ready', () => console.log(`Discord bot logged in as ${client.user.tag}!`));
-
 client.on('interactionCreate', async (interaction) => {
     try {
         if (interaction.isChatInputCommand()) await handleSlashCommand(interaction);
@@ -123,7 +112,7 @@ async function handleSlashCommand(interaction) {
     
     if (['market', 'leaderboard', 'recipes'].includes(commandName)) {
         let lines, title, type;
-        if (commandName === 'market') { lines = await handleMarket(); title = "Market"; type = 'market'; }
+        if (commandName === 'market') { const filter = options.getString('filter'); lines = await handleMarket(filter); title = filter ? `Market (Filter: ${filter})` : "Market"; type = 'market'; }
         if (commandName === 'leaderboard') { lines = await handleLeaderboard(); title = "Leaderboard"; type = 'leaderboard'; }
         if (commandName === 'recipes') { lines = handleRecipes().split('\n'); title = lines.shift(); type = 'recipes'; }
         const { discord } = getPaginatedResponse(user.id, type, lines, title, 0);
@@ -140,7 +129,7 @@ async function handleSlashCommand(interaction) {
         case 'work': result = await handleWork(account); await interaction.editReply({ content: result.message }); break;
         case 'daily': result = await handleDaily(account); await interaction.editReply({ content: result.message }); break;
         case 'gather': result = await handleGather(account); await interaction.editReply({ content: result.message }); break;
-        case 'inventory': await interaction.editReply({ content: handleInventory(account) }); break;
+        case 'inventory': itemName = options.getString('item_name'); result = handleInventory(account, itemName); await interaction.editReply({ content: result }); break;
         case 'craft': itemName = options.getString('item_name'); result = await handleCraft(account, itemName); await interaction.editReply({ content: result }); break;
         case 'flip': amount = options.getInteger('amount'); choice = options.getString('choice'); result = await handleFlip(account, amount, choice); await interaction.editReply({ content: result.message }); break;
         case 'slots': amount = options.getInteger('amount'); result = await handleSlots(account, amount); await interaction.editReply({ content: result.message }); break;
@@ -157,61 +146,30 @@ async function handleSlashCommand(interaction) {
 // --- WEB SERVER LOGIC ---
 // =========================================================================
 app.get("/", (req, res) => res.send("Bot is alive!"));
-
 app.post('/command', async (req, res) => {
     const apiKey = req.headers['x-api-key'];
     if (apiKey !== YOUR_API_KEY) return res.status(401).send('Error: Invalid API key');
-    
     const { command, username, args } = req.body;
     const identifier = username.toLowerCase();
     let responseMessage = '';
-    
-    if (command === 'verify') {
-        const code = args[0];
-        const verificationData = await verificationsCollection.findOne({ _id: code });
-        if (!verificationData || (Date.now() - verificationData.timestamp > 5 * 60 * 1000)) { responseMessage = 'That verification code is invalid or has expired.'; } 
-        else if (verificationData.drednotName.toLowerCase() !== username.toLowerCase()) { responseMessage = 'This verification code is for a different Drednot user.'; } 
-        else {
-            let targetAccount = await getAccount(username);
-            if (!targetAccount) targetAccount = await createNewAccount(username);
-            await updateAccount(targetAccount._id, { discordId: verificationData.discordId });
-            await verificationsCollection.deleteOne({ _id: code });
-            responseMessage = `✅ Verification successful! Your accounts are now linked.`;
-            try { const discordUser = await client.users.fetch(verificationData.discordId); discordUser.send(`Great news! Your link to the Drednot account **${username}** has been successfully verified.`); } catch (e) { console.log("Couldn't send DM confirmation."); }
-        }
-        return res.json({ reply: responseMessage });
-    }
-
-    if (['n', 'next', 'p', 'back'].includes(command)) {
-        const session = userPaginationData[identifier];
-        if (!session) return res.json({ reply: 'You have no active list to navigate.' });
-        const pageChange = (command === 'n' || command === 'next') ? 1 : -1;
-        const { game } = getPaginatedResponse(identifier, session.type, session.lines, session.title, pageChange);
-        return res.json({ reply: game.map(line => line.replace(/\*\*|`|>/g, '')) });
-    }
-    
+    if (command === 'verify') { const code = args[0]; const verificationData = await verificationsCollection.findOne({ _id: code }); if (!verificationData || (Date.now() - verificationData.timestamp > 5 * 60 * 1000)) { responseMessage = 'That verification code is invalid or has expired.'; } else if (verificationData.drednotName.toLowerCase() !== username.toLowerCase()) { responseMessage = 'This verification code is for a different Drednot user.'; } else { let targetAccount = await getAccount(username); if (!targetAccount) targetAccount = await createNewAccount(username); await updateAccount(targetAccount._id, { discordId: verificationData.discordId }); await verificationsCollection.deleteOne({ _id: code }); responseMessage = `✅ Verification successful! Your accounts are now linked.`; try { const discordUser = await client.users.fetch(verificationData.discordId); discordUser.send(`Great news! Your link to the Drednot account **${username}** has been successfully verified.`); } catch (e) { console.log("Couldn't send DM confirmation."); } } return res.json({ reply: responseMessage }); }
+    if (['n', 'next', 'p', 'back'].includes(command)) { const session = userPaginationData[identifier]; if (!session) return res.json({ reply: 'You have no active list to navigate.' }); const pageChange = (command === 'n' || command === 'next') ? 1 : -1; const { game } = getPaginatedResponse(identifier, session.type, session.lines, session.title, pageChange); return res.json({ reply: game.map(line => line.replace(/\*\*|`|>/g, '')) }); }
     let account = await getAccount(username);
-    if (!account) {
-        account = await createNewAccount(username);
-        return res.json({ reply: `Welcome, ${username}! Account created with ${STARTING_BALANCE} ${CURRENCY_NAME}. In Discord, use \`/link ${username}\` to link.` });
-    }
-
-    let result, lines, title;
-    const cleanText = (text) => Array.isArray(text) ? text.map(t => t.replace(/\*\*|`|>/g, '').replace(/<a?:.+?:\d+>/g, '').replace(/<:[a-zA-Z0-9_]+:[0-9]+>/g, '')) : String(text).replace(/\*\*|`|>/g, '').replace(/<a?:.+?:\d+>/g, '').replace(/<:[a-zA-Z0-9_]+:[0-9]+>/g, '');
-
+    if (!account) { account = await createNewAccount(username); return res.json({ reply: `Welcome, ${username}! Account created with ${STARTING_BALANCE} ${CURRENCY_NAME}. In Discord, use \`/link ${username}\` to link.` }); }
+    let result, lines, title; const cleanText = (text) => Array.isArray(text) ? text.map(t => t.replace(/\*\*|`|>/g, '').replace(/<a?:.+?:\d+>/g, '').replace(/<:[a-zA-Z0-9_]+:[0-9]+>/g, '')) : String(text).replace(/\*\*|`|>/g, '').replace(/<a?:.+?:\d+>/g, '').replace(/<:[a-zA-Z0-9_]+:[0-9]+>/g, '');
     switch (command) {
-        case 'm': case 'market': lines = await handleMarket(); title = "Market"; result = getPaginatedResponse(identifier, 'market', lines, title, 0); responseMessage = result.game.map(line => cleanText(line)); break;
-        case 'lb': case 'leaderboard': lines = await handleLeaderboard(); title = "Leaderboard"; result = getPaginatedResponse(identifier, 'leaderboard', lines, title, 0); responseMessage = result.game.map(line => cleanText(line)); break;
+        case 'market': const marketFilterArg = args.join(' '); lines = await handleMarket(marketFilterArg || null); title = marketFilterArg ? `Market (Filter: ${marketFilterArg})` : "Market"; result = getPaginatedResponse(identifier, 'market', lines, title, 0); responseMessage = result.game.map(line => cleanText(line)); break;
+        case 'leaderboard': lines = await handleLeaderboard(); title = "Leaderboard"; result = getPaginatedResponse(identifier, 'leaderboard', lines, title, 0); responseMessage = result.game.map(line => cleanText(line)); break;
         case 'recipes': lines = handleRecipes().split('\n'); title = lines.shift(); result = getPaginatedResponse(identifier, 'recipes', lines, title, 0); responseMessage = result.game.map(line => cleanText(line)); break;
         case 'bal': case 'balance': responseMessage = `${username}, your balance is: ${account.balance} ${CURRENCY_NAME}.`; break;
         case 'work': result = await handleWork(account); responseMessage = `${username}, ${result.message}`; break;
         case 'gather': result = await handleGather(account); responseMessage = `${username}, ${result.message}`; break;
-        case 'inv': case 'inventory': responseMessage = cleanText(handleInventory(account)); break;
+        case 'inv': case 'inventory': const invFilter = args.length > 0 ? args.join(' ') : null; responseMessage = cleanText(handleInventory(account, invFilter)); break;
         case 'craft': if (args.length === 0) { responseMessage = "Usage: !craft <item name>"; } else { let craftResult = await handleCraft(account, args.join(' ')); responseMessage = craftResult.replace('`/recipes`', '`!recipes`'); } break;
         case 'daily': result = await handleDaily(account); responseMessage = `${username}, ${result.message}`; break;
         case 'flip': if (args.length < 2) { responseMessage = "Usage: !flip <amount> <heads/tails>"; } else { result = await handleFlip(account, parseInt(args[0]), args[1].toLowerCase()); responseMessage = `${username}, ${result.message}`; } break;
         case 'slots': if (args.length < 1) { responseMessage = "Usage: !slots <amount>"; } else { result = await handleSlots(account, parseInt(args[0])); responseMessage = `${username}, ${result.message}`; } break;
-        case 'timer': case 'timers': result = handleTimers(account); responseMessage = result.map(line => cleanText(line)); break;
+        case 'timers': result = handleTimers(account); responseMessage = result.map(line => cleanText(line)); break;
         case 'smelt': if (args.length < 2) { responseMessage = "Usage: !smelt <ore name> <quantity>"; } else { const oreName = args.slice(0, -1).join(' '); const quantity = parseInt(args[args.length - 1]); result = await handleSmelt(account, oreName, quantity); responseMessage = result.message; } break;
         case 'pay': if (args.length < 2) { responseMessage = "Usage: !pay <username> <amount>"; } else { const amountToPay = parseInt(args[args.length - 1]); const recipientName = args.slice(0, -1).join(' '); const recipientAccount = await getAccount(recipientName); if (!recipientAccount) { responseMessage = `Could not find a player named "${recipientName}".`; } else { result = await handlePay(account, recipientAccount, amountToPay); responseMessage = result.message.replace(/\*/g, ''); } } break;
         case 'ms': case 'marketsell': if (args.length < 3) { responseMessage = "Usage: !marketsell <item name> <qty> <price>"; } else { const itemName = args.slice(0, -2).join(' '); const qty = parseInt(args[args.length - 2]); const price = parseFloat(args[args.length - 1]); const itemId = getItemIdByName(itemName); if (!itemId || isNaN(qty) || isNaN(price) || qty <= 0 || price <= 0) { responseMessage = "Invalid format."; } else if ((account.inventory[itemId] || 0) < qty) { responseMessage = "You don't have enough of that item."; } else { await modifyInventory(account._id, itemId, -qty); const listing = await marketCollection.insertOne({ sellerId: account._id, sellerName: account._id, itemId, quantity: qty, price }); responseMessage = `Listed ${qty}x ${ITEMS[itemId].name}. ID: ${listing.insertedId.toString().slice(-6)}`; } } break;
