@@ -56,8 +56,6 @@ const LOOTBOX_VENDOR_NAME = "The Collector";
 const LOOTBOX_VENDOR_ID = "NPC_COLLECTOR";
 const LOOTBOX_TICK_INTERVAL_MINUTES = 1;
 const MAX_LOOTBOX_LISTINGS = 5;
-
-// --- CHANGE 1: Renamed crates for consistency ---
 const LOOTBOXES = {
     'miners_crate': {
         name: "Miner's Crate", emoji: '📦', price: 250,
@@ -65,17 +63,17 @@ const LOOTBOXES = {
     }, 'builders_crate': {
         name: "Builder's Crate", emoji: '🧱', price: 300,
         contents: [ { type: 'item', id: 'wood', min: 20, max: 50, weight: 50 }, { type: 'item', id: 'stone', min: 20, max: 50, weight: 45 }, { type: 'item', id: 'smelter', min: 1, max: 1, weight: 5 } ]
-    }, 'gamblers_crate': { // Renamed from Gambler's Purse
+    }, 'gamblers_crate': {
         name: "Gambler's Crate", emoji: '💰', price: 400,
         contents: [ { type: 'bits', id: null, min: 1, max: 200, weight: 60 }, { type: 'bits', id: null, min: 201, max: 600, weight: 35 }, { type: 'bits', id: null, min: 601, max: 1500, weight: 5 } ]
-    }, 'crystal_crate': { // Renamed from Crystal Trove
+    }, 'crystal_crate': {
         name: "Crystal Crate", emoji: '💎', price: 500,
         contents: [ { type: 'item', id: 'raw_crystal', min: 1, max: 3, weight: 80 }, { type: 'item', id: 'raw_crystal', min: 4, max: 8, weight: 18 }, { type: 'item', id: 'crystal_pickaxe', min: 1, max: 1, weight: 2 } ]
     }
 };
 
 // =========================================================================
-// --- DATABASE & COMMAND HANDLERS (No changes in this section) ---
+// --- DATABASE & COMMAND HANDLERS ---
 // =========================================================================
 async function getAccount(identifier) { const idStr = String(identifier).toLowerCase(); return await economyCollection.findOne({ $or: [{ _id: idStr }, { discordId: String(identifier) }] }); }
 async function createNewAccount(drednotName) { const lowerName = drednotName.toLowerCase(); const newAccount = { _id: lowerName, balance: STARTING_BALANCE, discordId: null, lastWork: null, lastGather: null, lastDaily: null, lastSlots: null, inventory: {}, smelting: null }; await economyCollection.insertOne(newAccount); return newAccount; }
@@ -99,14 +97,31 @@ async function handleSmelt(account, oreName, quantity) { const smelterCount = ac
 async function handlePay(senderAccount, recipientAccount, amount) { if (isNaN(amount) || amount <= 0) return { success: false, message: "Please provide a valid, positive amount to pay." }; if (senderAccount.balance < amount) return { success: false, message: `You don't have enough Bits. You only have ${senderAccount.balance}.`}; if (senderAccount._id === recipientAccount._id) return { success: false, message: "You can't pay yourself!" }; await updateAccount(senderAccount._id, { balance: senderAccount.balance - amount }); await updateAccount(recipientAccount._id, { balance: recipientAccount.balance + amount }); return { success: true, message: `You paid ${amount} ${CURRENCY_NAME} to **${recipientAccount._id}**.` }; }
 async function handleMarket(filter = null) { let query = {}; const filterLower = filter ? filter.toLowerCase().trim() : null; if (filterLower) { const itemIds = Object.keys(ITEMS).filter(k => ITEMS[k].name.toLowerCase().includes(filterLower)); if (itemIds.length === 0) return { success: false, lines: [`No market listings found matching "${filter}".`] }; query = { itemId: { $in: itemIds } }; } const listings = await marketCollection.find(query).sort({ listingId: 1 }).toArray(); const brokenListings = listings.filter(l => l.listingId == null); if (brokenListings.length > 0) { console.log(`[Self-Heal] Found ${brokenListings.length} broken market listings. Repairing now...`); for (const listing of brokenListings) { const newId = await findNextAvailableListingId(marketCollection); await marketCollection.updateOne({ _id: listing._id }, { $set: { listingId: newId } }); listing.listingId = newId; console.log(`[Self-Heal] Repaired listing for item ${listing.itemId}. New ID: ${newId}`); } } if (listings.length === 0) { const message = filter ? `No market listings found matching "${filter}".` : "The market is empty."; return { success: false, lines: [message] }; } const formattedLines = listings.map(l => `(ID: ${l.listingId}) ${ITEMS[l.itemId]?.emoji || '📦'} **${l.quantity}x** ${ITEMS[l.itemId].name} @ **${l.price}** ${CURRENCY_NAME} ea. by *${l.sellerName}*`); return { success: true, lines: formattedLines }; }
 function openLootbox(lootboxId) { const lootbox = LOOTBOXES[lootboxId]; if (!lootbox) return null; const totalWeight = lootbox.contents.reduce((sum, item) => sum + item.weight, 0); let random = Math.random() * totalWeight; for (const item of lootbox.contents) { if (random < item.weight) { const amount = Math.floor(Math.random() * (item.max - item.min + 1)) + item.min; return { type: item.type, id: item.id, amount: amount }; } random -= item.weight; } return null; }
-async function handleCrateShop() { const listings = await lootboxCollection.find().sort({ lootboxId: 1 }).toArray(); if (listings.length === 0) { return { success: false, lines: [`The Collector has no crates for sale right now.`] }; } const formattedLines = listings.map(l => { const crate = LOOTBOXES[l.lootboxId]; return `${crate.emoji} **${l.quantity}x** ${crate.name} @ **${crate.price}** ${CURRENCY_NAME} ea.`; }); return { success: true, lines: formattedLines }; }
+
+// --- THIS IS THE CORRECTED FUNCTION ---
+async function handleCrateShop() {
+    const listings = await lootboxCollection.find().sort({ lootboxId: 1 }).toArray();
+    if (listings.length === 0) {
+        return { success: false, lines: [`The Collector has no crates for sale right now.`] };
+    }
+    const formattedLines = listings
+        .filter(l => LOOTBOXES[l.lootboxId]) // Filter out invalid/old listings
+        .map(l => {
+            const crate = LOOTBOXES[l.lootboxId];
+            return `${crate.emoji} **${l.quantity}x** ${crate.name} @ **${crate.price}** ${CURRENCY_NAME} ea.`;
+        });
+    if (formattedLines.length === 0) {
+        return { success: false, lines: [`The Collector's stock is being updated. Please check back in a moment.`] };
+    }
+    return { success: true, lines: formattedLines };
+}
 
 // --- BACKGROUND & NPC LOGIC ---
 async function processVendorTicks() { console.log("Processing regular vendor tick..."); const vendor = VENDORS[Math.floor(Math.random() * VENDORS.length)]; const currentListingsCount = await marketCollection.countDocuments({ sellerId: vendor.sellerId }); if (currentListingsCount >= 3) { console.log(`${vendor.name} has enough items listed. Skipping.`); return; } if (Math.random() < vendor.chance) { const itemToSell = vendor.stock[Math.floor(Math.random() * vendor.stock.length)]; try { const newListingId = await findNextAvailableListingId(marketCollection); await marketCollection.insertOne({ listingId: newListingId, sellerId: vendor.sellerId, sellerName: vendor.name, itemId: itemToSell.itemId, quantity: itemToSell.quantity, price: itemToSell.price }); console.log(`${vendor.name} listed ${itemToSell.quantity}x ${ITEMS[itemToSell.itemId].name}!`); } catch (error) { if (error.code === 11000) { console.warn(`[Vendor Tick] Race condition for ${vendor.name}. Retrying next tick.`); } else { console.error(`[Vendor Tick] Error for ${vendor.name}:`, error); } } } }
 async function processLootboxVendorTick() { console.log("Processing lootbox vendor tick..."); const currentListingsCount = await lootboxCollection.countDocuments({}); if (currentListingsCount >= MAX_LOOTBOX_LISTINGS) { console.log("The Collector has enough listings. Skipping."); return; } const lootboxTypes = Object.keys(LOOTBOXES); const crateToSellId = lootboxTypes[Math.floor(Math.random() * lootboxTypes.length)]; const alreadySelling = await lootboxCollection.findOne({ lootboxId: crateToSellId }); if (alreadySelling) { console.log(`The Collector is already selling ${crateToSellId}. Skipping.`); return; } const crateToSell = LOOTBOXES[crateToSellId]; const quantity = Math.floor(Math.random() * 5) + 1; await lootboxCollection.insertOne({ sellerId: LOOTBOX_VENDOR_ID, lootboxId: crateToSellId, quantity: quantity, price: crateToSell.price }); console.log(`The Collector listed ${quantity}x ${crateToSell.name}!`); }
 async function processFinishedSmelting() { const now = Date.now(); const finishedSmelts = await economyCollection.find({ "smelting.finishTime": { $ne: null, $lte: now } }).toArray(); for (const account of finishedSmelts) { const { ingotId, quantity } = account.smelting; await modifyInventory(account._id, ingotId, quantity); await updateAccount(account._id, { smelting: null }); try { const user = await client.users.fetch(account.discordId); user.send(`✅ Your smelting is complete! You received ${quantity}x ${ITEMS[ingotId].name}.`); } catch (e) { console.log(`Could not DM ${account._id} about finished smelt.`); } } }
 
-// --- DISCORD BOT LOGIC (No changes in this section) ---
+// --- DISCORD BOT LOGIC ---
 client.on('ready', () => console.log(`Discord bot logged in as ${client.user.tag}!`));
 client.on('interactionCreate', async (interaction) => { try { if (interaction.isChatInputCommand()) await handleSlashCommand(interaction); else if (interaction.isButton()) await handleButtonInteraction(interaction); } catch (error) { console.error("Error handling interaction:", error); if (!interaction.replied && !interaction.deferred) { await interaction.reply({ content: 'An unexpected error occurred!', ephemeral: true }); } else { await interaction.editReply({ content: 'An unexpected error occurred!', components: [] }); } } });
 async function handleButtonInteraction(interaction) { const [action, type, userId] = interaction.customId.split('_'); if (interaction.user.id !== userId) return interaction.reply({ content: "You cannot use these buttons.", ephemeral: true }); const session = userPaginationData[userId]; if (!session) return interaction.update({ content: 'This interactive message has expired or is invalid.', components: [] }); const pageChange = (type === 'next') ? 1 : -1; const { discord } = getPaginatedResponse(userId, session.type, session.lines, session.title, pageChange); await interaction.update(discord); }
@@ -176,8 +191,6 @@ app.post('/command', async (req, res) => {
         case 'mb': case 'marketbuy': if (args.length < 1) { responseMessage = "Usage: !marketbuy <listing_id>"; } else { const listingId = parseInt(args[0]); if(isNaN(listingId)) { responseMessage = "Listing ID must be a number."; break; } const listingToBuy = await marketCollection.findOne({ listingId: listingId }); if (!listingToBuy) { responseMessage = 'Invalid listing ID.'; break; } const totalCost = listingToBuy.quantity * listingToBuy.price; if (listingToBuy.sellerId === account._id) { responseMessage = "You can't buy your own listing."; } else if (account.balance < totalCost) { responseMessage = "You can't afford this."; } else { await updateAccount(account._id, { balance: account.balance - totalCost }); await modifyInventory(account._id, listingToBuy.itemId, listingToBuy.quantity); const sellerAccount = await getAccount(listingToBuy.sellerId); if (sellerAccount) await updateAccount(sellerAccount._id, { balance: sellerAccount.balance + (totalCost * (1 - MARKET_TAX_RATE)) }); await marketCollection.deleteOne({ _id: listingToBuy._id }); responseMessage = `You bought ${listingToBuy.quantity}x ${ITEMS[listingToBuy.itemId].name}!`; } } break;
         case 'mc': case 'marketcancel': if (args.length < 1) { responseMessage = "Usage: !marketcancel <listing_id>"; } else { const listingId = parseInt(args[0]); if(isNaN(listingId)) { responseMessage = "Listing ID must be a number."; break; } const listingToCancel = await marketCollection.findOne({ listingId: listingId }); if (!listingToCancel || listingToCancel.sellerId !== account._id) { responseMessage = "This is not your listing."; } else { await modifyInventory(account._id, listingToCancel.itemId, listingToCancel.quantity); await marketCollection.deleteOne({ _id: listingToCancel._id }); responseMessage = `Cancelled your listing for ${listingToCancel.quantity}x ${ITEMS[listingToCancel.itemId].name}.`; } } break;
         case 'cs': result = await handleCrateShop(); if (!result.success) { responseMessage = result.lines[0]; break; } title = "The Collector's Crates"; const csPage = getPaginatedResponse(identifier, 'crateshop', result.lines, title, 0); responseMessage = csPage.game.map(line => cleanText(line)); break;
-        
-        // --- CHANGE 2: Added !cb as an alias ---
         case 'co': case 'cb': case 'crateopen':
             if (args.length < 2) { responseMessage = "Usage: !co [crate name] [amount]"; break; }
             const amountToOpen = parseInt(args[args.length - 1]);
