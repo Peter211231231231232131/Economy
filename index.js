@@ -19,16 +19,7 @@ const mongoClient = new MongoClient(mongoUri);
 let economyCollection, verificationsCollection, marketCollection;
 let userPaginationData = {};
 
-async function connectToDatabase() {
-    try {
-        await mongoClient.connect();
-        console.log("Successfully connected to MongoDB Atlas!");
-        const db = mongoClient.db("drednot_economy");
-        economyCollection = db.collection("players");
-        verificationsCollection = db.collection("verifications");
-        marketCollection = db.collection("market_listings");
-    } catch (error) { console.error("DB connection failed", error); process.exit(1); }
-}
+async function connectToDatabase() { try { await mongoClient.connect(); console.log("Connected to MongoDB!"); const db = mongoClient.db("drednot_economy"); economyCollection = db.collection("players"); verificationsCollection = db.collection("verifications"); marketCollection = db.collection("market_listings"); } catch (error) { console.error("DB connection failed", error); process.exit(1); } }
 
 // =========================================================================
 // --- ECONOMY DEFINITIONS ---
@@ -72,17 +63,15 @@ async function handleLeaderboard() { const topPlayers = await economyCollection.
 function handleTimers(account) { const now = Date.now(); const timers = []; timers.push(`💪 Work: ${(account.lastWork && (now - account.lastWork) < WORK_COOLDOWN_MINUTES * 60 * 1000) ? formatDuration(((account.lastWork + WORK_COOLDOWN_MINUTES * 60 * 1000) - now) / 1000) : 'Ready!'}`); timers.push(`⛏️ Gather: ${(account.lastGather && (now - account.lastGather) < GATHER_COOLDOWN_MINUTES * 60 * 1000) ? formatDuration(((account.lastGather + GATHER_COOLDOWN_MINUTES * 60 * 1000) - now) / 1000) : 'Ready!'}`); const nextDaily = new Date(); nextDaily.setUTCDate(nextDaily.getUTCDate() + 1); nextDaily.setUTCHours(0, 0, 0, 0); timers.push(`📅 Daily: ${account.lastDaily && new Date(account.lastDaily).getUTCDate() === new Date().getUTCDate() ? formatDuration((nextDaily - now) / 1000) : 'Ready!'}`); const slotsTimeLeft = (account.lastSlots || 0) + SLOTS_COOLDOWN_SECONDS * 1000 - now; if (slotsTimeLeft > 0) timers.push(`🎰 Slots: ${formatDuration(slotsTimeLeft / 1000)}`); if (account.smelting && account.smelting.finishTime > now) timers.push(`🔥 Smelting: ${formatDuration((account.smelting.finishTime - now) / 1000)}`); return [`**Personal Cooldowns for ${account._id}:**`].concat(timers.map(t => `> ${t}`)); }
 async function handleSmelt(account, oreName, quantity) { const smelterCount = account.inventory['smelter'] || 0; if (smelterCount < 1) return { success: false, message: "You need to craft a 🔥 Smelter first!" }; if (account.smelting && account.smelting.finishTime > Date.now()) return { success: false, message: `You are already smelting! Wait for it to finish.` }; const oreId = getItemIdByName(oreName); const ingotId = SMELTABLE_ORES[oreId]; if (!ingotId) return { success: false, message: `You can't smelt that. Valid ores: Iron Ore, Copper Ore.` }; if (isNaN(quantity) || quantity <= 0) return { success: false, message: "Invalid quantity." }; if ((account.inventory[oreId] || 0) < quantity) return { success: false, message: `You don't have enough ${ITEMS[oreId].name}.` }; const coalNeeded = quantity * SMELT_COAL_COST_PER_ORE; if ((account.inventory['coal'] || 0) < coalNeeded) return { success: false, message: `You don't have enough coal. You need ${coalNeeded} ⚫ Coal.` }; await modifyInventory(account._id, oreId, -quantity); await modifyInventory(account._id, 'coal', -coalNeeded); const timePerOre = (SMELT_COOLDOWN_SECONDS_PER_ORE / smelterCount) * 1000; const totalTime = timePerOre * quantity; const finishTime = Date.now() + totalTime; await updateAccount(account._id, { smelting: { ingotId, quantity, finishTime } }); return { success: true, message: `You begin smelting ${quantity}x ${ITEMS[oreId].name}. It will take ${formatDuration(totalTime/1000)}.` }; }
 async function handlePay(senderAccount, recipientAccount, amount) { if (isNaN(amount) || amount <= 0) return { success: false, message: "Please provide a valid, positive amount to pay." }; if (senderAccount.balance < amount) return { success: false, message: `You don't have enough Bits. You only have ${senderAccount.balance}.`}; if (senderAccount._id === recipientAccount._id) return { success: false, message: "You can't pay yourself!" }; await updateAccount(senderAccount._id, { balance: senderAccount.balance - amount }); await updateAccount(recipientAccount._id, { balance: recipientAccount.balance + amount }); return { success: true, message: `You paid ${amount} ${CURRENCY_NAME} to **${recipientAccount._id}**.` }; }
-async function handleMarket(filter = null) { const query = {}; const filterLower = filter ? filter.toLowerCase() : null; if (filterLower) { const itemIds = Object.keys(ITEMS).filter(k => ITEMS[k].name.toLowerCase().includes(filterLower)); if (itemIds.length === 0) return [`No market listings found matching "${filter}".`]; query.itemId = { $in: itemIds }; } const listings = await marketCollection.find(query).sort({ _id: -1 }).toArray(); if (listings.length === 0) { const message = filter ? `No market listings found matching "${filter}".` : "The market is empty."; return [message]; } return listings.map(l => `(ID: \`${l._id.toString().slice(-6)}\`) ${ITEMS[l.itemId]?.emoji || '📦'} **${l.quantity}x** ${ITEMS[l.itemId].name} @ **${l.price}** ${CURRENCY_NAME} ea. by *${l.sellerName}*`); }
+async function handleMarket(filter = null) { let query = {}; const filterLower = filter ? filter.toLowerCase() : null; if (filterLower) { const itemIds = Object.keys(ITEMS).filter(k => ITEMS[k].name.toLowerCase().includes(filterLower)); if (itemIds.length === 0) return [`No market listings found matching "${filter}".`]; query = { itemId: { $in: itemIds } }; } const listings = await marketCollection.find(query).sort({ _id: -1 }).toArray(); if (listings.length === 0) { const message = filter ? `No market listings found matching "${filter}".` : "The market is empty."; return [message]; } return listings.map(l => `(ID: \`${l._id.toString().slice(-6)}\`) ${ITEMS[l.itemId]?.emoji || '📦'} **${l.quantity}x** ${ITEMS[l.itemId].name} @ **${l.price}** ${CURRENCY_NAME} ea. by *${l.sellerName}*`); }
 
-// --- BACKGROUND & NPC LOGIC ---
-async function processVendorTicks() { console.log("Processing vendor tick..."); const vendor = VENDORS[Math.floor(Math.random() * VENDORS.length)]; const currentListingsCount = await marketCollection.countDocuments({ sellerId: vendor.sellerId }); if (currentListingsCount >= 3) { console.log(`${vendor.name} already has ${currentListingsCount} items listed. Skipping.`); return; } if (Math.random() < vendor.chance) { const itemToSell = vendor.stock[Math.floor(Math.random() * vendor.stock.length)]; await marketCollection.insertOne({ sellerId: vendor.sellerId, sellerName: vendor.name, itemId: itemToSell.itemId, quantity: itemToSell.quantity, price: itemToSell.price }); console.log(`${vendor.name} listed ${itemToSell.quantity}x ${ITEMS[itemToSell.itemId].name}!`); } }
+async function processVendorTicks() { console.log("Processing vendor tick..."); for (const vendor of VENDORS) { const currentListingsCount = await marketCollection.countDocuments({ sellerId: vendor.sellerId }); if (currentListingsCount >= 3) { console.log(`${vendor.name} has enough items listed. Skipping.`); continue; } if (Math.random() < vendor.chance) { const itemToSell = vendor.stock[Math.floor(Math.random() * vendor.stock.length)]; await marketCollection.insertOne({ sellerId: vendor.sellerId, sellerName: vendor.name, itemId: itemToSell.itemId, quantity: itemToSell.quantity, price: itemToSell.price }); console.log(`${vendor.name} listed ${itemToSell.quantity}x ${ITEMS[itemToSell.itemId].name}!`); } } }
 async function processFinishedSmelting() { const now = Date.now(); const finishedSmelts = await economyCollection.find({ "smelting.finishTime": { $ne: null, $lte: now } }).toArray(); for (const account of finishedSmelts) { const { ingotId, quantity } = account.smelting; await modifyInventory(account._id, ingotId, quantity); await updateAccount(account._id, { smelting: null }); try { const user = await client.users.fetch(account.discordId); user.send(`✅ Your smelting is complete! You received ${quantity}x ${ITEMS[ingotId].name}.`); } catch (e) { console.log(`Could not DM ${account._id} about finished smelt.`); } } }
 
 // =========================================================================
 // --- DISCORD BOT LOGIC ---
 // =========================================================================
 client.on('ready', () => console.log(`Discord bot logged in as ${client.user.tag}!`));
-
 client.on('interactionCreate', async (interaction) => {
     try {
         if (interaction.isChatInputCommand()) await handleSlashCommand(interaction);
@@ -96,10 +85,8 @@ client.on('interactionCreate', async (interaction) => {
 async function handleButtonInteraction(interaction) {
     const [action, type, userId] = interaction.customId.split('_');
     if (interaction.user.id !== userId) return interaction.reply({ content: "You cannot use these buttons.", ephemeral: true });
-    
     const session = userPaginationData[userId];
     if (!session) return interaction.update({ content: 'This interactive message has expired or is invalid.', components: [] });
-
     const pageChange = (type === 'next') ? 1 : -1;
     const { discord } = getPaginatedResponse(userId, session.type, session.lines, session.title, pageChange);
     await interaction.update(discord);
@@ -126,7 +113,6 @@ async function handleSlashCommand(interaction) {
         if (commandName === 'market') { const filter = options.getString('filter'); lines = await handleMarket(filter); title = filter ? `Market (Filter: ${filter})` : "Market"; type = 'market'; }
         if (commandName === 'leaderboard') { lines = await handleLeaderboard(); title = "Leaderboard"; type = 'leaderboard'; }
         if (commandName === 'recipes') { lines = handleRecipes().split('\n'); title = lines.shift(); type = 'recipes'; }
-        
         const { discord } = getPaginatedResponse(user.id, type, lines, title, 0);
         await interaction.editReply(discord);
         return;
@@ -158,6 +144,7 @@ async function handleSlashCommand(interaction) {
 // --- WEB SERVER LOGIC ---
 // =========================================================================
 app.get("/", (req, res) => res.send("Bot is alive!"));
+
 app.post('/command', async (req, res) => {
     const apiKey = req.headers['x-api-key'];
     if (apiKey !== YOUR_API_KEY) return res.status(401).send('Error: Invalid API key');
