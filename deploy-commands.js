@@ -21,7 +21,9 @@ const commands = [
     { name: 'marketbuy', description: 'Buy an item from the market.', options: [{ name: 'listing_id', type: 3, description: 'The ID of the listing (e.g., last 6 chars)', required: true }] },
     { name: 'marketcancel', description: 'Cancel one of your market listings.', options: [{ name: 'listing_id', type: 3, description: 'The ID of the listing to cancel', required: true }] },
     { name: 'leaderboard', description: 'Shows the top players by balance.' },
-    { name: 'timers', description: 'Check your personal cooldowns for commands like work, gather, etc.' } // NEW
+    { name: 'timers', description: 'Check your personal cooldowns.' },
+    // --- NEW SMELT COMMAND ---
+    { name: 'smelt', description: 'Smelt ores into ingots.', options: [ { name: 'ore_name', type: 3, description: 'The type of ore to smelt (e.g., Iron Ore)', required: true }, { name: 'quantity', type: 4, description: 'How many ores to smelt', required: true }] },
 ];
 
 const rest = new REST({ version: '10' }).setToken(token);
