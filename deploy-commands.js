@@ -1,127 +1,69 @@
-// ==UserScript==
-// @name         Drednot.io Economy Client (Queued)
-// @namespace    http://tampermonkey.net/
-// @version      3.0
-// @description  Process ! cmd using server just trust bro :)
-// @match        https://drednot.io/*
-// @grant        GM_xmlhttpRequest
-// @connect      onrender.com
-// @downloadURL  https://update.greasyfork.org/scripts/540382/Drednotio%20Economy%20Client%20%28Queued%29.user.js
-// @updateURL    https://update.greasyfork.org/scripts/540382/Drednotio%20Economy%20Client%20%28Queued%29.meta.js
-// ==/UserScript==
-(function() {
-    'use strict';
+const { REST, Routes } = require('discord.js');
+require('dotenv').config();
 
-    console.log("Economy Client Script v3.0 Started! :D");
-    const BOT_SERVER_URL = 'https://drednot-eco-bot.onrender.com/command';
-    const API_KEY = 'drednot123';
-    const MESSAGE_DELAY = 1000;
+const token = process.env.DISCORD_TOKEN;
+const clientId = process.env.DISCORD_CLIENT_ID;
+if (!token || !clientId) throw new Error("Missing secrets!");
 
-    const ZWSP = '\u200B';
-    const chatBox = document.getElementById("chat");
-    const chatInp = document.getElementById("chat-input");
-    const chatBtn = document.getElementById("chat-send");
+const commands = [
+    // ... all other existing commands like /link, /balance, etc. are here ...
+    { name: 'link', description: 'Links your Discord account to your Drednot.io account.', options: [{ name: 'drednot_name', type: 3, description: 'Your exact in-game name', required: true }] },
+    { name: 'balance', description: 'Check your in-game balance.' },
+    { name: 'work', description: 'Work to earn bits.' },
+    { name: 'gather', description: 'Gather for random resources.' },
+    { name: 'inventory', description: 'Check your item inventory.', options: [{ name: 'item_name', type: 3, description: 'Optional: name of an item to inspect', required: false }] },
+    { name: 'recipes', description: 'View a list of all craftable items.' },
+    { name: 'craft', description: 'Craft an item.', options: [{ name: 'item_name', type: 3, description: 'The name of the item to craft', required: true }] },
+    { name: 'daily', description: 'Claim your daily reward.' },
+    { name: 'flip', description: 'Flip a coin for bits.', options: [{ name: 'amount', type: 4, description: 'The amount to bet', required: true }, { name: 'choice', type: 3, description: 'Your choice (heads or tails)', required: true, choices: [{name: 'Heads', value: 'heads'}, {name: 'Tails', value: 'tails'}] }] },
+    { name: 'slots', description: 'Play the slot machine.', options: [{ name: 'amount', type: 4, description: 'The amount to bet', required: true }] },
+    { name: 'market', description: 'View items for sale on the player market.', options: [{ name: 'filter', type: 3, description: 'Optional: filter market by item name', required: false }] },
+    { name: 'marketsell', description: 'Put an item up for sale.', options: [ { name: 'item_name', type: 3, description: 'Item name', required: true }, { name: 'quantity', type: 4, description: 'How many', required: true }, { name: 'price', type: 10, description: 'Price per item', required: true }] },
+    { name: 'marketbuy', description: 'Buy an item from the market.', options: [{ name: 'listing_id', type: 4, description: 'The numerical ID of the listing to purchase', required: true }] },
+    { name: 'marketcancel', description: 'Cancel one of your market listings.', options: [{ name: 'listing_id', type: 4, description: 'The numerical ID of the listing to cancel', required: true }] },
+    { name: 'leaderboard', description: 'Shows the top players by balance.' },
+    { name: 'timers', description: 'Check your personal cooldowns.' },
+    { name: 'smelt', description: 'Smelt ores into ingots.', options: [ { name: 'ore_name', type: 3, description: 'The type of ore to smelt (e.g., Iron Ore)', required: true }, { name: 'quantity', type: 4, description: 'How many ores to smelt', required: true }] },
+    { name: 'pay', description: 'Give Bits to another player.', options: [ { name: 'user', type: 6, description: 'The Discord user to pay', required: true }, { name: 'amount', type: 4, description: 'The amount of Bits to give', required: true }] },
 
-    let messageQueue = [];
-    let isProcessingQueue = false;
-
-    function sendChat(mess) {
-        if (chatBox?.classList.contains('closed')) chatBtn?.click();
-        if (chatInp) chatInp.value = mess;
-        chatBtn?.click();
-    }
-
-    function queueReply(message) {
-        if (Array.isArray(message)) {
-            message.forEach(line => messageQueue.push(ZWSP + line));
-        } else {
-            messageQueue.push(ZWSP + message);
-        }
-        if (!isProcessingQueue) {
-            processQueue();
-        }
-    }
-
-    function processQueue() {
-        if (messageQueue.length === 0) {
-            isProcessingQueue = false;
-            return;
-        }
-        isProcessingQueue = true;
-        const nextMessage = messageQueue.shift();
-        sendChat(nextMessage);
-        setTimeout(processQueue, MESSAGE_DELAY);
-    }
-
-    function processRemoteCommand(command, username, args) {
-        GM_xmlhttpRequest({
-            method: "POST",
-            url: BOT_SERVER_URL,
-            headers: { "Content-Type": "application/json", "x-api-key": API_KEY },
-            data: JSON.stringify({ command, username, args }),
-            onload: function(response) {
-                if (response.status === 200) {
-                    try {
-                        const data = JSON.parse(response.responseText);
-                        if (data.reply) {
-                            queueReply(data.reply);
-                        }
-                    } catch (e) { console.error("[EcoClient] Error parsing server response:", e); }
-                } else {
-                    console.error(`[EcoClient] Server error: ${response.status}`, response.responseText);
-                    queueReply(`Error: Bot server returned an error (${response.status}).`);
-                }
+    // --- UPDATED LOOTBOX COMMANDS ---
+    { 
+        name: 'crateshop', 
+        description: "View The Collector's special crates for sale." 
+    },
+    { 
+        name: 'csb', // RENAMED from 'crateopen'
+        description: 'Buy and open one or more crates from The Collector.', 
+        options: [
+            { 
+                name: 'crate_name', 
+                type: 3,
+                description: "The name of the crate you want to buy.", 
+                required: true,
+                choices: [
+                    { name: "Miner's Crate", value: "Miner's Crate" },
+                    { name: "Builder's Crate", value: "Builder's Crate" },
+                    { name: "Gambler's Crate", value: "Gambler's Crate" },
+                    { name: "Crystal Crate", value: "Crystal Crate" },
+                ]
             },
-            onerror: function(response) {
-                console.error("[EcoClient] Connection error:", response);
-                queueReply("Error: Could not connect to the bot server.");
+            { 
+                name: 'amount', 
+                type: 4,
+                description: 'The number of crates you want to buy and open.', 
+                required: true 
             }
-        });
+        ] 
+    },
+];
+
+const rest = new REST({ version: '10' }).setToken(token);
+(async () => {
+    try {
+        console.log(`Registering ${commands.length} application (/) commands.`);
+        await rest.put(Routes.applicationCommands(clientId), { body: commands });
+        console.log('✅ Successfully reloaded application (/) commands.');
+    } catch (error) { 
+        console.error("❌ FAILED TO DEPLOY COMMANDS:", error); 
     }
-
-    function monitorChat() {
-        if (!chatBox) { setTimeout(monitorChat, 2000); return; }
-        console.log("[EcoClient] Chat monitor started.");
-        const chatContent = document.getElementById("chat-content");
-        const observer = new MutationObserver(mutations => {
-            mutations.forEach(mutation => {
-                mutation.addedNodes.forEach(node => {
-                    if (node.nodeType === 1 && node.tagName === "P") {
-                        const bdiElement = node.querySelector("bdi");
-                        if (bdiElement) {
-                            const pText = node.textContent || "";
-                            if (pText.startsWith(ZWSP)) return;
-
-                            const colonIdx = pText.indexOf(':');
-                            if (colonIdx !== -1) {
-                                let msgTxt = pText.substring(colonIdx + 1).trim();
-                                if (msgTxt.startsWith('!')) {
-                                    let username = bdiElement.innerText.replace(/\u200B/g, '').trim();
-                                    const parts = msgTxt.slice(1).trim().split(/ +/);
-                                    const command = parts.shift().toLowerCase();
-                                    const args = parts;
-                                    
-                                    // This list is now cleaner and perfectly matches the server logic.
-                                    const allCommands = [
-                                        "verify", "bal", "balance", "work", "pay", "gather", "inv", "inventory", 
-                                        "recipes", "craft", "daily", "flip", "n", "next", "p", "back", "slots", 
-                                        "market", "smelt", "m", "ms", "marketsell", "timers", "mb", "marketbuy", 
-                                        "mc", "marketcancel", "lb", "leaderboard", "cs", "csb"
-                                    ];
-
-                                    if (allCommands.includes(command)) {
-                                        processRemoteCommand(command, username, args);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                });
-            });
-        });
-        observer.observe(chatContent, { childList: true, subtree: true });
-    }
-
-    if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', monitorChat); }
-    else { monitorChat(); }
 })();
