@@ -51,25 +51,15 @@ const SLOT_REELS = [ ['🍒', '🍋', '🍊', '🍉', '⭐', '🔔', '💎', '�
 const SLOTS_PAYOUTS = { three_of_a_kind: 15, two_of_a_kind: 3.5, jackpot_symbol: '💎', jackpot_multiplier: 50 };
 const VENDOR_TICK_INTERVAL_MINUTES = 1;
 const VENDORS = [ { name: "TerraNova Exports", sellerId: "NPC_TERRA", stock: [ { itemId: 'wood', quantity: 20, price: 1 }, { itemId: 'stone', quantity: 20, price: 1 } ], chance: 0.5 }, { name: "Nexus Logistics", sellerId: "NPC_NEXUS", stock: [ { itemId: 'basic_pickaxe', quantity: 1, price: 15 }, { itemId: 'sturdy_pickaxe', quantity: 1, price: 75 } ], chance: 0.3 }, { name: "Blackrock Mining Co.", sellerId: "NPC_BLACKROCK", stock: [ { itemId: 'coal', quantity: 15, price: 2 }, { itemId: 'iron_ore', quantity: 10, price: 3 } ], chance: 0.4 }, { name: "Copperline Inc.", sellerId: "NPC_COPPER", stock: [ { itemId: 'copper_ore', quantity: 10, price: 4 } ], chance: 0.2 }, { name: "Junk Peddler", sellerId: "NPC_JUNK", stock: [ { itemId: 'stone', quantity: 5, price: 1 }, { itemId: 'wood', quantity: 5, price: 1 } ], chance: 0.6 } ];
-
 const LOOTBOX_VENDOR_NAME = "The Collector";
 const LOOTBOX_VENDOR_ID = "NPC_COLLECTOR";
 const LOOTBOX_TICK_INTERVAL_MINUTES = 1;
 const MAX_LOOTBOX_LISTINGS = 5;
 const LOOTBOXES = {
-    'miners_crate': {
-        name: "Miner's Crate", emoji: '📦', price: 250,
-        contents: [ { type: 'item', id: 'iron_ore', min: 10, max: 25, weight: 40 }, { type: 'item', id: 'copper_ore', min: 8, max: 20, weight: 30 }, { type: 'item', id: 'coal', min: 15, max: 30, weight: 20 }, { type: 'item', id: 'basic_pickaxe', min: 1, max: 1, weight: 9 }, { type: 'item', id: 'sturdy_pickaxe', min: 1, max: 1, weight: 1 } ]
-    }, 'builders_crate': {
-        name: "Builder's Crate", emoji: '🧱', price: 300,
-        contents: [ { type: 'item', id: 'wood', min: 20, max: 50, weight: 50 }, { type: 'item', id: 'stone', min: 20, max: 50, weight: 45 }, { type: 'item', id: 'smelter', min: 1, max: 1, weight: 5 } ]
-    }, 'gamblers_crate': {
-        name: "Gambler's Crate", emoji: '💰', price: 400,
-        contents: [ { type: 'bits', id: null, min: 1, max: 200, weight: 60 }, { type: 'bits', id: null, min: 201, max: 600, weight: 35 }, { type: 'bits', id: null, min: 601, max: 1500, weight: 5 } ]
-    }, 'crystal_crate': {
-        name: "Crystal Crate", emoji: '💎', price: 500,
-        contents: [ { type: 'item', id: 'raw_crystal', min: 1, max: 3, weight: 80 }, { type: 'item', id: 'raw_crystal', min: 4, max: 8, weight: 18 }, { type: 'item', id: 'crystal_pickaxe', min: 1, max: 1, weight: 2 } ]
-    }
+    'miners_crate': { name: "Miner's Crate", emoji: '📦', price: 250, contents: [ { type: 'item', id: 'iron_ore', min: 10, max: 25, weight: 40 }, { type: 'item', id: 'copper_ore', min: 8, max: 20, weight: 30 }, { type: 'item', id: 'coal', min: 15, max: 30, weight: 20 }, { type: 'item', id: 'basic_pickaxe', min: 1, max: 1, weight: 9 }, { type: 'item', id: 'sturdy_pickaxe', min: 1, max: 1, weight: 1 } ] },
+    'builders_crate': { name: "Builder's Crate", emoji: '🧱', price: 300, contents: [ { type: 'item', id: 'wood', min: 20, max: 50, weight: 50 }, { type: 'item', id: 'stone', min: 20, max: 50, weight: 45 }, { type: 'item', id: 'smelter', min: 1, max: 1, weight: 5 } ] },
+    'gamblers_crate': { name: "Gambler's Crate", emoji: '💰', price: 400, contents: [ { type: 'bits', id: null, min: 1, max: 200, weight: 60 }, { type: 'bits', id: null, min: 201, max: 600, weight: 35 }, { type: 'bits', id: null, min: 601, max: 1500, weight: 5 } ] },
+    'crystal_crate': { name: "Crystal Crate", emoji: '💎', price: 500, contents: [ { type: 'item', id: 'raw_crystal', min: 1, max: 3, weight: 80 }, { type: 'item', id: 'raw_crystal', min: 4, max: 8, weight: 18 }, { type: 'item', id: 'crystal_pickaxe', min: 1, max: 1, weight: 2 } ] }
 };
 
 // =========================================================================
@@ -97,24 +87,7 @@ async function handleSmelt(account, oreName, quantity) { const smelterCount = ac
 async function handlePay(senderAccount, recipientAccount, amount) { if (isNaN(amount) || amount <= 0) return { success: false, message: "Please provide a valid, positive amount to pay." }; if (senderAccount.balance < amount) return { success: false, message: `You don't have enough Bits. You only have ${senderAccount.balance}.`}; if (senderAccount._id === recipientAccount._id) return { success: false, message: "You can't pay yourself!" }; await updateAccount(senderAccount._id, { balance: senderAccount.balance - amount }); await updateAccount(recipientAccount._id, { balance: recipientAccount.balance + amount }); return { success: true, message: `You paid ${amount} ${CURRENCY_NAME} to **${recipientAccount._id}**.` }; }
 async function handleMarket(filter = null) { let query = {}; const filterLower = filter ? filter.toLowerCase().trim() : null; if (filterLower) { const itemIds = Object.keys(ITEMS).filter(k => ITEMS[k].name.toLowerCase().includes(filterLower)); if (itemIds.length === 0) return { success: false, lines: [`No market listings found matching "${filter}".`] }; query = { itemId: { $in: itemIds } }; } const listings = await marketCollection.find(query).sort({ listingId: 1 }).toArray(); const brokenListings = listings.filter(l => l.listingId == null); if (brokenListings.length > 0) { console.log(`[Self-Heal] Found ${brokenListings.length} broken market listings. Repairing now...`); for (const listing of brokenListings) { const newId = await findNextAvailableListingId(marketCollection); await marketCollection.updateOne({ _id: listing._id }, { $set: { listingId: newId } }); listing.listingId = newId; console.log(`[Self-Heal] Repaired listing for item ${listing.itemId}. New ID: ${newId}`); } } if (listings.length === 0) { const message = filter ? `No market listings found matching "${filter}".` : "The market is empty."; return { success: false, lines: [message] }; } const formattedLines = listings.map(l => `(ID: ${l.listingId}) ${ITEMS[l.itemId]?.emoji || '📦'} **${l.quantity}x** ${ITEMS[l.itemId].name} @ **${l.price}** ${CURRENCY_NAME} ea. by *${l.sellerName}*`); return { success: true, lines: formattedLines }; }
 function openLootbox(lootboxId) { const lootbox = LOOTBOXES[lootboxId]; if (!lootbox) return null; const totalWeight = lootbox.contents.reduce((sum, item) => sum + item.weight, 0); let random = Math.random() * totalWeight; for (const item of lootbox.contents) { if (random < item.weight) { const amount = Math.floor(Math.random() * (item.max - item.min + 1)) + item.min; return { type: item.type, id: item.id, amount: amount }; } random -= item.weight; } return null; }
-
-// --- THIS IS THE CORRECTED FUNCTION ---
-async function handleCrateShop() {
-    const listings = await lootboxCollection.find().sort({ lootboxId: 1 }).toArray();
-    if (listings.length === 0) {
-        return { success: false, lines: [`The Collector has no crates for sale right now.`] };
-    }
-    const formattedLines = listings
-        .filter(l => LOOTBOXES[l.lootboxId]) // Filter out invalid/old listings
-        .map(l => {
-            const crate = LOOTBOXES[l.lootboxId];
-            return `${crate.emoji} **${l.quantity}x** ${crate.name} @ **${crate.price}** ${CURRENCY_NAME} ea.`;
-        });
-    if (formattedLines.length === 0) {
-        return { success: false, lines: [`The Collector's stock is being updated. Please check back in a moment.`] };
-    }
-    return { success: true, lines: formattedLines };
-}
+async function handleCrateShop() { const listings = await lootboxCollection.find().sort({ lootboxId: 1 }).toArray(); if (listings.length === 0) { return { success: false, lines: [`The Collector has no crates for sale right now.`] }; } const formattedLines = listings.filter(l => LOOTBOXES[l.lootboxId]).map(l => { const crate = LOOTBOXES[l.lootboxId]; return `${crate.emoji} **${l.quantity}x** ${crate.name} @ **${crate.price}** ${CURRENCY_NAME} ea.`; }); if (formattedLines.length === 0) { return { success: false, lines: [`The Collector's stock is being updated. Please check back in a moment.`] }; } return { success: true, lines: formattedLines }; }
 
 // --- BACKGROUND & NPC LOGIC ---
 async function processVendorTicks() { console.log("Processing regular vendor tick..."); const vendor = VENDORS[Math.floor(Math.random() * VENDORS.length)]; const currentListingsCount = await marketCollection.countDocuments({ sellerId: vendor.sellerId }); if (currentListingsCount >= 3) { console.log(`${vendor.name} has enough items listed. Skipping.`); return; } if (Math.random() < vendor.chance) { const itemToSell = vendor.stock[Math.floor(Math.random() * vendor.stock.length)]; try { const newListingId = await findNextAvailableListingId(marketCollection); await marketCollection.insertOne({ listingId: newListingId, sellerId: vendor.sellerId, sellerName: vendor.name, itemId: itemToSell.itemId, quantity: itemToSell.quantity, price: itemToSell.price }); console.log(`${vendor.name} listed ${itemToSell.quantity}x ${ITEMS[itemToSell.itemId].name}!`); } catch (error) { if (error.code === 11000) { console.warn(`[Vendor Tick] Race condition for ${vendor.name}. Retrying next tick.`); } else { console.error(`[Vendor Tick] Error for ${vendor.name}:`, error); } } } }
@@ -134,44 +107,15 @@ app.get("/", (req, res) => res.send("Bot is alive!"));
 app.post('/command', async (req, res) => {
     const apiKey = req.headers['x-api-key'];
     if (apiKey !== YOUR_API_KEY) return res.status(401).send('Error: Invalid API key');
-    
     const { command, username, args } = req.body;
     const identifier = username.toLowerCase();
     let responseMessage = '';
-    
-    if (command === 'verify') {
-        const code = args[0];
-        const verificationData = await verificationsCollection.findOne({ _id: code });
-        if (!verificationData || (Date.now() - verificationData.timestamp > 5 * 60 * 1000)) { responseMessage = 'That verification code is invalid or has expired.'; } 
-        else if (verificationData.drednotName.toLowerCase() !== username.toLowerCase()) { responseMessage = 'This verification code is for a different Drednot user.'; } 
-        else {
-            let targetAccount = await getAccount(username);
-            if (!targetAccount) targetAccount = await createNewAccount(username);
-            await updateAccount(targetAccount._id, { discordId: verificationData.discordId });
-            await verificationsCollection.deleteOne({ _id: code });
-            responseMessage = `✅ Verification successful! Your accounts are now linked.`;
-            try { const discordUser = await client.users.fetch(verificationData.discordId); discordUser.send(`Great news! Your link to the Drednot account **${username}** has been successfully verified.`); } catch (e) { console.log("Couldn't send DM confirmation."); }
-        }
-        return res.json({ reply: responseMessage });
-    }
-
-    if (['n', 'next', 'p', 'back'].includes(command)) {
-        const session = userPaginationData[identifier];
-        if (!session) return res.json({ reply: 'You have no active list to navigate.' });
-        const pageChange = (command === 'n' || command === 'next') ? 1 : -1;
-        const { game } = getPaginatedResponse(identifier, session.type, session.lines, session.title, pageChange);
-        return res.json({ reply: game.map(line => line.replace(/\*\*|`|>/g, '')) });
-    }
-    
+    if (command === 'verify') { const code = args[0]; const verificationData = await verificationsCollection.findOne({ _id: code }); if (!verificationData || (Date.now() - verificationData.timestamp > 5 * 60 * 1000)) { responseMessage = 'That verification code is invalid or has expired.'; } else if (verificationData.drednotName.toLowerCase() !== username.toLowerCase()) { responseMessage = 'This verification code is for a different Drednot user.'; } else { let targetAccount = await getAccount(username); if (!targetAccount) targetAccount = await createNewAccount(username); await updateAccount(targetAccount._id, { discordId: verificationData.discordId }); await verificationsCollection.deleteOne({ _id: code }); responseMessage = `✅ Verification successful! Your accounts are now linked.`; try { const discordUser = await client.users.fetch(verificationData.discordId); discordUser.send(`Great news! Your link to the Drednot account **${username}** has been successfully verified.`); } catch (e) { console.log("Couldn't send DM confirmation."); } } return res.json({ reply: responseMessage }); }
+    if (['n', 'next', 'p', 'back'].includes(command)) { const session = userPaginationData[identifier]; if (!session) return res.json({ reply: 'You have no active list to navigate.' }); const pageChange = (command === 'n' || command === 'next') ? 1 : -1; const { game } = getPaginatedResponse(identifier, session.type, session.lines, session.title, pageChange); return res.json({ reply: game.map(line => line.replace(/\*\*|`|>/g, '')) }); }
     let account = await getAccount(username);
-    if (!account) {
-        account = await createNewAccount(username);
-        return res.json({ reply: `Welcome, ${username}! Account created with ${STARTING_BALANCE} ${CURRENCY_NAME}. In Discord, use \`/link ${username}\` to link.` });
-    }
-
+    if (!account) { account = await createNewAccount(username); return res.json({ reply: `Welcome, ${username}! Account created with ${STARTING_BALANCE} ${CURRENCY_NAME}. In Discord, use \`/link ${username}\` to link.` }); }
     let result, lines, title;
     const cleanText = (text) => Array.isArray(text) ? text.map(t => t.replace(/\*\*|`|>/g, '').replace(/<a?:.+?:\d+>/g, '').replace(/<:[a-zA-Z0-9_]+:[0-9]+>/g, '')) : String(text).replace(/\*\*|`|>/g, '').replace(/<a?:.+?:\d+>/g, '').replace(/<:[a-zA-Z0-9_]+:[0-9]+>/g, '');
-
     switch (command) {
         case 'm': case 'market': const marketFilter = args.length > 0 ? args.join(' ') : null; result = await handleMarket(marketFilter); if (!result.success) { responseMessage = result.lines[0]; break; } title = marketFilter ? `Market (Filter: ${marketFilter})` : "Market"; const marketPage = getPaginatedResponse(identifier, 'market', result.lines, title, 0); responseMessage = marketPage.game.map(line => cleanText(line)); break;
         case 'lb': case 'leaderboard': result = await handleLeaderboard(); if (!result.success) { responseMessage = result.lines[0]; break; } title = "Leaderboard"; const lbPage = getPaginatedResponse(identifier, 'leaderboard', result.lines, title, 0); responseMessage = lbPage.game.map(line => cleanText(line)); break;
@@ -191,27 +135,7 @@ app.post('/command', async (req, res) => {
         case 'mb': case 'marketbuy': if (args.length < 1) { responseMessage = "Usage: !marketbuy <listing_id>"; } else { const listingId = parseInt(args[0]); if(isNaN(listingId)) { responseMessage = "Listing ID must be a number."; break; } const listingToBuy = await marketCollection.findOne({ listingId: listingId }); if (!listingToBuy) { responseMessage = 'Invalid listing ID.'; break; } const totalCost = listingToBuy.quantity * listingToBuy.price; if (listingToBuy.sellerId === account._id) { responseMessage = "You can't buy your own listing."; } else if (account.balance < totalCost) { responseMessage = "You can't afford this."; } else { await updateAccount(account._id, { balance: account.balance - totalCost }); await modifyInventory(account._id, listingToBuy.itemId, listingToBuy.quantity); const sellerAccount = await getAccount(listingToBuy.sellerId); if (sellerAccount) await updateAccount(sellerAccount._id, { balance: sellerAccount.balance + (totalCost * (1 - MARKET_TAX_RATE)) }); await marketCollection.deleteOne({ _id: listingToBuy._id }); responseMessage = `You bought ${listingToBuy.quantity}x ${ITEMS[listingToBuy.itemId].name}!`; } } break;
         case 'mc': case 'marketcancel': if (args.length < 1) { responseMessage = "Usage: !marketcancel <listing_id>"; } else { const listingId = parseInt(args[0]); if(isNaN(listingId)) { responseMessage = "Listing ID must be a number."; break; } const listingToCancel = await marketCollection.findOne({ listingId: listingId }); if (!listingToCancel || listingToCancel.sellerId !== account._id) { responseMessage = "This is not your listing."; } else { await modifyInventory(account._id, listingToCancel.itemId, listingToCancel.quantity); await marketCollection.deleteOne({ _id: listingToCancel._id }); responseMessage = `Cancelled your listing for ${listingToCancel.quantity}x ${ITEMS[listingToCancel.itemId].name}.`; } } break;
         case 'cs': result = await handleCrateShop(); if (!result.success) { responseMessage = result.lines[0]; break; } title = "The Collector's Crates"; const csPage = getPaginatedResponse(identifier, 'crateshop', result.lines, title, 0); responseMessage = csPage.game.map(line => cleanText(line)); break;
-        case 'co': case 'cb': case 'crateopen':
-            if (args.length < 2) { responseMessage = "Usage: !co [crate name] [amount]"; break; }
-            const amountToOpen = parseInt(args[args.length - 1]);
-            const crateNameToOpen = args.slice(0, -1).join(' ');
-            if (isNaN(amountToOpen) || amountToOpen <= 0) { responseMessage = "Please enter a valid amount to open."; break; }
-            const crateId = Object.keys(LOOTBOXES).find(k => LOOTBOXES[k].name.toLowerCase() === crateNameToOpen.toLowerCase());
-            if (!crateId) { responseMessage = `The Collector doesn't sell a crate named "${crateNameToOpen}". Check the !cs shop.`; break; }
-            const listing = await lootboxCollection.findOne({ lootboxId: crateId });
-            if (!listing) { responseMessage = `The Collector is not selling any "${crateNameToOpen}" right now.`; break; }
-            if (listing.quantity < amountToOpen) { responseMessage = `The Collector only has ${listing.quantity} of those crates in stock.`; break; }
-            const totalCost = listing.price * amountToOpen;
-            if (account.balance < totalCost) { responseMessage = `You can't afford that. It costs ${totalCost} ${CURRENCY_NAME} to open ${amountToOpen}.`; break; }
-            await updateAccount(account._id, { balance: account.balance - totalCost });
-            let totalRewards = {};
-            for (let i = 0; i < amountToOpen; i++) { const reward = openLootbox(listing.lootboxId); if (reward.type === 'bits') { totalRewards.bits = (totalRewards.bits || 0) + reward.amount; } else { totalRewards[reward.id] = (totalRewards[reward.id] || 0) + reward.amount; } }
-            let rewardMessages = [];
-            for (const rewardId in totalRewards) { if (rewardId === 'bits') { await economyCollection.updateOne({ _id: account._id }, { $inc: { balance: totalRewards[rewardId] } }); rewardMessages.push(`**${totalRewards[rewardId]}** ${CURRENCY_NAME}`); } else { await modifyInventory(account._id, rewardId, totalRewards[rewardId]); rewardMessages.push(`${ITEMS[rewardId].emoji} **${totalRewards[rewardId]}x** ${ITEMS[rewardId].name}`); } }
-            await lootboxCollection.updateOne({ _id: listing._id }, { $inc: { quantity: -amountToOpen } });
-            await lootboxCollection.deleteMany({ quantity: { $lte: 0 } });
-            responseMessage = `You opened ${amountToOpen}x ${LOOTBOXES[listing.lootboxId].name} and received: ${cleanText(rewardMessages).join(', ')}!`;
-            break;
+        case 'co': case 'cb': case 'crateopen': if (args.length < 2) { responseMessage = "Usage: !co [crate name] [amount]"; break; } const amountToOpen = parseInt(args[args.length - 1]); const crateNameToOpen = args.slice(0, -1).join(' '); if (isNaN(amountToOpen) || amountToOpen <= 0) { responseMessage = "Please enter a valid amount to open."; break; } const crateId = Object.keys(LOOTBOXES).find(k => LOOTBOXES[k].name.toLowerCase() === crateNameToOpen.toLowerCase()); if (!crateId) { responseMessage = `The Collector doesn't sell a crate named "${crateNameToOpen}". Check the !cs shop.`; break; } const listing = await lootboxCollection.findOne({ lootboxId: crateId }); if (!listing) { responseMessage = `The Collector is not selling any "${crateNameToOpen}" right now.`; break; } if (listing.quantity < amountToOpen) { responseMessage = `The Collector only has ${listing.quantity} of those crates in stock.`; break; } const totalCost = listing.price * amountToOpen; if (account.balance < totalCost) { responseMessage = `You can't afford that. It costs ${totalCost} ${CURRENCY_NAME} to open ${amountToOpen}.`; break; } await updateAccount(account._id, { balance: account.balance - totalCost }); let totalRewards = {}; for (let i = 0; i < amountToOpen; i++) { const reward = openLootbox(listing.lootboxId); if (reward.type === 'bits') { totalRewards.bits = (totalRewards.bits || 0) + reward.amount; } else { totalRewards[reward.id] = (totalRewards[reward.id] || 0) + reward.amount; } } let rewardMessages = []; for (const rewardId in totalRewards) { if (rewardId === 'bits') { await economyCollection.updateOne({ _id: account._id }, { $inc: { balance: totalRewards[rewardId] } }); rewardMessages.push(`**${totalRewards[rewardId]}** ${CURRENCY_NAME}`); } else { await modifyInventory(account._id, rewardId, totalRewards[rewardId]); rewardMessages.push(`${ITEMS[rewardId].emoji} **${totalRewards[rewardId]}x** ${ITEMS[rewardId].name}`); } } await lootboxCollection.updateOne({ _id: listing._id }, { $inc: { quantity: -amountToOpen } }); await lootboxCollection.deleteMany({ quantity: { $lte: 0 } }); responseMessage = `You opened ${amountToOpen}x ${LOOTBOXES[listing.lootboxId].name} and received: ${cleanText(rewardMessages).join(', ')}!`; break;
         default: responseMessage = `Unknown command: !${command}`;
     }
     res.json({ reply: responseMessage });
