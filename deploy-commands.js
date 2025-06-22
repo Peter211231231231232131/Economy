@@ -40,8 +40,8 @@ const commands = [
                 type: 3, // String
                 description: "The name of the crate you want to open.", 
                 required: true,
-                // --- THIS IS THE CHANGE ---
-                // Adding choices makes it a dropdown for the user, preventing typos.
+                // --- THIS IS THE UPDATED SECTION ---
+                // The choices now reflect the new, consistent crate names.
                 choices: [
                     { name: "Miner's Crate", value: "Miner's Crate" },
                     { name: "Builder's Crate", value: "Builder's Crate" },
