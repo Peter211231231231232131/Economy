@@ -59,7 +59,16 @@ async function updateAccount(accountId, updates) { await economyCollection.updat
 async function modifyInventory(accountId, itemId, amount) { if (!itemId) return; const updateField = `inventory.${itemId}`; await economyCollection.updateOne({ _id: accountId.toLowerCase() }, { $inc: { [updateField]: amount } }); }
 function getItemIdByName(name) { return Object.keys(ITEMS).find(k => ITEMS[k].name.toLowerCase() === name.toLowerCase()); }
 function formatDuration(seconds) { if (seconds < 60) return `${Math.ceil(seconds)}s`; const minutes = Math.floor(seconds / 60); const remainingSeconds = Math.ceil(seconds % 60); return `${minutes}m ${remainingSeconds}s`; }
-async function findNextAvailableListingId() { const listings = await marketCollection.find({}, { projection: { listingId: 1 } }).sort({ listingId: 1 }).toArray(); const usedIds = listings.map(l => l.listingId); let nextId = 1; while (usedIds.includes(nextId)) { nextId++; } return nextId; }
+// --- CHANGE 1: Modified function to accept the collection ---
+async function findNextAvailableListingId(collection) {
+    const listings = await collection.find({}, { projection: { listingId: 1 } }).sort({ listingId: 1 }).toArray();
+    const usedIds = listings.map(l => l.listingId).filter(id => id != null); // Filter out null/undefined
+    let nextId = 1;
+    while (usedIds.includes(nextId)) {
+        nextId++;
+    }
+    return nextId;
+}
 function getPaginatedResponse(identifier, type, allLines, title, pageChange = 0) { const linesPerPage = 5; if (pageChange === 0 || !userPaginationData[identifier] || userPaginationData[identifier].type !== type) { userPaginationData[identifier] = { lines: allLines, currentPage: 0, type, title }; } const session = userPaginationData[identifier]; session.currentPage += pageChange; const totalPages = Math.ceil(session.lines.length / linesPerPage); if (session.currentPage >= totalPages && totalPages > 0) session.currentPage = totalPages - 1; if (session.currentPage < 0) session.currentPage = 0; const startIndex = session.currentPage * linesPerPage; const linesForPage = session.lines.slice(startIndex, startIndex + linesPerPage); const footer = `Page ${session.currentPage + 1}/${totalPages}. Use !n or !p to navigate.`; const discordContent = `**--- ${title} (Page ${session.currentPage + 1}/${totalPages}) ---**\n${linesForPage.length > 0 ? linesForPage.join('\n') : "No items on this page."}`; const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`paginate_back_${identifier}`).setLabel('⬅️ Previous').setStyle(ButtonStyle.Secondary).setDisabled(session.currentPage === 0), new ButtonBuilder().setCustomId(`paginate_next_${identifier}`).setLabel('Next ➡️').setStyle(ButtonStyle.Secondary).setDisabled(session.currentPage >= totalPages - 1)); const gameContent = [`--- ${title} ---`, ...linesForPage, footer]; return { discord: { content: discordContent, components: [row] }, game: gameContent }; }
 
 async function handleWork(account) { const now = Date.now(); const cooldown = WORK_COOLDOWN_MINUTES * 60 * 1000; if (account.lastWork && (now - account.lastWork) < cooldown) return { success: false, message: `You are on cooldown. Wait ${formatDuration((cooldown - (now - account.lastWork)) / 1000)}.` }; let baseEarnings = Math.floor(Math.random() * (WORK_REWARD_MAX - WORK_REWARD_MIN + 1)) + WORK_REWARD_MIN; let bonusFlat = 0, bonusPercent = 0.0; for (const itemId in account.inventory) { const itemDef = ITEMS[itemId]; if (itemDef?.type === 'tool' && itemDef.effects) { const qty = account.inventory[itemId]; if (itemDef.effects.work_bonus_flat) bonusFlat += itemDef.effects.work_bonus_flat * qty; if (itemDef.effects.work_bonus_percent) bonusPercent += itemDef.effects.work_bonus_percent * qty; } } const bonusAmount = Math.floor(baseEarnings * bonusPercent) + bonusFlat; const totalEarnings = baseEarnings + bonusAmount; await updateAccount(account._id, { balance: account.balance + totalEarnings, lastWork: now }); let bonusText = bonusAmount > 0 ? ` (+${bonusAmount} bonus)` : ''; return { success: true, message: `You earned ${totalEarnings} ${CURRENCY_NAME}${bonusText}! New balance is ${account.balance + totalEarnings}.` }; }
@@ -74,10 +83,59 @@ async function handleLeaderboard() { const topPlayers = await economyCollection.
 function handleTimers(account) { const now = Date.now(); const timers = []; timers.push(`💪 Work: ${(account.lastWork && (now - account.lastWork) < WORK_COOLDOWN_MINUTES * 60 * 1000) ? formatDuration(((account.lastWork + WORK_COOLDOWN_MINUTES * 60 * 1000) - now) / 1000) : 'Ready!'}`); timers.push(`⛏️ Gather: ${(account.lastGather && (now - account.lastGather) < GATHER_COOLDOWN_MINUTES * 60 * 1000) ? formatDuration(((account.lastGather + GATHER_COOLDOWN_MINUTES * 60 * 1000) - now) / 1000) : 'Ready!'}`); const nextDaily = new Date(); nextDaily.setUTCDate(nextDaily.getUTCDate() + 1); nextDaily.setUTCHours(0, 0, 0, 0); timers.push(`📅 Daily: ${account.lastDaily && new Date(account.lastDaily).getUTCDate() === new Date().getUTCDate() ? formatDuration((nextDaily - now) / 1000) : 'Ready!'}`); const slotsTimeLeft = (account.lastSlots || 0) + SLOTS_COOLDOWN_SECONDS * 1000 - now; if (slotsTimeLeft > 0) timers.push(`🎰 Slots: ${formatDuration(slotsTimeLeft / 1000)}`); if (account.smelting && account.smelting.finishTime > now) timers.push(`🔥 Smelting: ${formatDuration((account.smelting.finishTime - now) / 1000)}`); return [`**Personal Cooldowns for ${account._id}:**`].concat(timers.map(t => `> ${t}`)); }
 async function handleSmelt(account, oreName, quantity) { const smelterCount = account.inventory['smelter'] || 0; if (smelterCount < 1) return { success: false, message: "You need to craft a 🔥 Smelter first!" }; if (account.smelting && account.smelting.finishTime > Date.now()) return { success: false, message: `You are already smelting! Wait for it to finish.` }; const oreId = getItemIdByName(oreName); const ingotId = SMELTABLE_ORES[oreId]; if (!ingotId) return { success: false, message: `You can't smelt that. Valid ores: Iron Ore, Copper Ore.` }; if (isNaN(quantity) || quantity <= 0) return { success: false, message: "Invalid quantity." }; if ((account.inventory[oreId] || 0) < quantity) return { success: false, message: `You don't have enough ${ITEMS[oreId].name}.` }; const coalNeeded = quantity * SMELT_COAL_COST_PER_ORE; if ((account.inventory['coal'] || 0) < coalNeeded) return { success: false, message: `You don't have enough coal. You need ${coalNeeded} ⚫ Coal.` }; await modifyInventory(account._id, oreId, -quantity); await modifyInventory(account._id, 'coal', -coalNeeded); const timePerOre = (SMELT_COOLDOWN_SECONDS_PER_ORE / smelterCount) * 1000; const totalTime = timePerOre * quantity; const finishTime = Date.now() + totalTime; await updateAccount(account._id, { smelting: { ingotId, quantity, finishTime } }); return { success: true, message: `You begin smelting ${quantity}x ${ITEMS[oreId].name}. It will take ${formatDuration(totalTime/1000)}.` }; }
 async function handlePay(senderAccount, recipientAccount, amount) { if (isNaN(amount) || amount <= 0) return { success: false, message: "Please provide a valid, positive amount to pay." }; if (senderAccount.balance < amount) return { success: false, message: `You don't have enough Bits. You only have ${senderAccount.balance}.`}; if (senderAccount._id === recipientAccount._id) return { success: false, message: "You can't pay yourself!" }; await updateAccount(senderAccount._id, { balance: senderAccount.balance - amount }); await updateAccount(recipientAccount._id, { balance: recipientAccount.balance + amount }); return { success: true, message: `You paid ${amount} ${CURRENCY_NAME} to **${recipientAccount._id}**.` }; }
-async function handleMarket(filter = null) { let query = {}; const filterLower = filter ? filter.toLowerCase().trim() : null; if (filterLower) { const itemIds = Object.keys(ITEMS).filter(k => ITEMS[k].name.toLowerCase().includes(filterLower)); if (itemIds.length === 0) return { success: false, lines: [`No market listings found matching "${filter}".`] }; query = { itemId: { $in: itemIds } }; } const listings = await marketCollection.find(query).sort({ listingId: 1 }).toArray(); if (listings.length === 0) { const message = filter ? `No market listings found matching "${filter}".` : "The market is empty."; return { success: false, lines: [message] }; } const formattedLines = listings.map(l => `(ID: ${l.listingId}) ${ITEMS[l.itemId]?.emoji || '📦'} **${l.quantity}x** ${ITEMS[l.itemId].name} @ **${l.price}** ${CURRENCY_NAME} ea. by *${l.sellerName}*`); return { success: true, lines: formattedLines }; }
+
+// --- CHANGE 2: Added self-healing logic to handleMarket ---
+async function handleMarket(filter = null) {
+    let query = {};
+    const filterLower = filter ? filter.toLowerCase().trim() : null;
+    if (filterLower) {
+        const itemIds = Object.keys(ITEMS).filter(k => ITEMS[k].name.toLowerCase().includes(filterLower));
+        if (itemIds.length === 0) return { success: false, lines: [`No market listings found matching "${filter}".`] };
+        query = { itemId: { $in: itemIds } };
+    }
+    const listings = await marketCollection.find(query).sort({ listingId: 1 }).toArray();
+
+    // --- SELF-HEALING LOGIC ---
+    // Find any listings that are missing an ID.
+    const brokenListings = listings.filter(l => l.listingId == null); // `== null` checks for both null and undefined
+    if (brokenListings.length > 0) {
+        console.log(`[Self-Heal] Found ${brokenListings.length} broken market listings. Repairing now...`);
+        for (const listing of brokenListings) {
+            const newId = await findNextAvailableListingId(marketCollection);
+            // Fix the listing in the database
+            await marketCollection.updateOne({ _id: listing._id }, { $set: { listingId: newId } });
+            // Also fix the listing in memory so it displays correctly immediately
+            listing.listingId = newId;
+            console.log(`[Self-Heal] Repaired listing for item ${listing.itemId}. New ID: ${newId}`);
+        }
+    }
+    // --- END SELF-HEALING LOGIC ---
+
+    if (listings.length === 0) {
+        const message = filter ? `No market listings found matching "${filter}".` : "The market is empty.";
+        return { success: false, lines: [message] };
+    }
+    const formattedLines = listings.map(l => `(ID: ${l.listingId}) ${ITEMS[l.itemId]?.emoji || '📦'} **${l.quantity}x** ${ITEMS[l.itemId].name} @ **${l.price}** ${CURRENCY_NAME} ea. by *${l.sellerName}*`);
+    return { success: true, lines: formattedLines };
+}
 
 // --- BACKGROUND & NPC LOGIC ---
-async function processVendorTicks() { console.log("Processing vendor tick..."); const vendor = VENDORS[Math.floor(Math.random() * VENDORS.length)]; const currentListingsCount = await marketCollection.countDocuments({ sellerId: vendor.sellerId }); if (currentListingsCount >= 3) { console.log(`${vendor.name} has enough items listed. Skipping.`); return; } if (Math.random() < vendor.chance) { const itemToSell = vendor.stock[Math.floor(Math.random() * vendor.stock.length)]; const newListingId = await findNextAvailableListingId(); await marketCollection.insertOne({ listingId: newListingId, sellerId: vendor.sellerId, sellerName: vendor.name, itemId: itemToSell.itemId, quantity: itemToSell.quantity, price: itemToSell.price }); console.log(`${vendor.name} listed ${itemToSell.quantity}x ${ITEMS[itemToSell.itemId].name}!`); } }
+async function processVendorTicks() {
+    console.log("Processing vendor tick...");
+    const vendor = VENDORS[Math.floor(Math.random() * VENDORS.length)];
+    const currentListingsCount = await marketCollection.countDocuments({ sellerId: vendor.sellerId });
+    if (currentListingsCount >= 3) {
+        console.log(`${vendor.name} has enough items listed. Skipping.`);
+        return;
+    }
+    if (Math.random() < vendor.chance) {
+        const itemToSell = vendor.stock[Math.floor(Math.random() * vendor.stock.length)];
+        // --- CHANGE 3: Pass collection to the function ---
+        const newListingId = await findNextAvailableListingId(marketCollection);
+        await marketCollection.insertOne({ listingId: newListingId, sellerId: vendor.sellerId, sellerName: vendor.name, itemId: itemToSell.itemId, quantity: itemToSell.quantity, price: itemToSell.price });
+        console.log(`${vendor.name} listed ${itemToSell.quantity}x ${ITEMS[itemToSell.itemId].name}!`);
+    }
+}
 async function processFinishedSmelting() { const now = Date.now(); const finishedSmelts = await economyCollection.find({ "smelting.finishTime": { $ne: null, $lte: now } }).toArray(); for (const account of finishedSmelts) { const { ingotId, quantity } = account.smelting; await modifyInventory(account._id, ingotId, quantity); await updateAccount(account._id, { smelting: null }); try { const user = await client.users.fetch(account.discordId); user.send(`✅ Your smelting is complete! You received ${quantity}x ${ITEMS[ingotId].name}.`); } catch (e) { console.log(`Could not DM ${account._id} about finished smelt.`); } } }
 
 // =========================================================================
@@ -147,7 +205,20 @@ async function handleSlashCommand(interaction) {
         case 'timers': result = handleTimers(account); await interaction.editReply({ content: result.join('\n') }); break;
         case 'smelt': itemName = options.getString('ore_name'); quantity = options.getInteger('quantity'); result = await handleSmelt(account, itemName, quantity); await interaction.editReply({ content: result.message }); break;
         case 'pay': const recipientUser = options.getUser('user'); amount = options.getInteger('amount'); if (recipientUser.bot) return interaction.editReply({ content: "You can't pay bots."}); const recipientAccount = await getAccount(recipientUser.id); if (!recipientAccount) return interaction.editReply({ content: `That user isn't linked to a Drednot account yet.` }); result = await handlePay(account, recipientAccount, amount); await interaction.editReply({ content: result.message }); break;
-        case 'marketsell': itemName = options.getString('item_name'); quantity = options.getInteger('quantity'); price = options.getNumber('price'); const itemIdToSell = getItemIdByName(itemName); if (!itemIdToSell) return interaction.editReply({ content: 'Invalid item name.' }); if (quantity <= 0 || price <= 0) return interaction.editReply({ content: 'Quantity and price must be positive.' }); if ((account.inventory[itemIdToSell] || 0) < quantity) return interaction.editReply({ content: 'You do not have enough of that item to sell.' }); await modifyInventory(account._id, itemIdToSell, -quantity); const newListingId = await findNextAvailableListingId(); await marketCollection.insertOne({ listingId: newListingId, sellerId: account._id, sellerName: account._id, itemId: itemIdToSell, quantity, price }); await interaction.editReply({ content: `You listed ${quantity}x ${ITEMS[itemIdToSell].name} for sale. Listing ID: **${newListingId}**` }); break;
+        case 'marketsell':
+            itemName = options.getString('item_name');
+            quantity = options.getInteger('quantity');
+            price = options.getNumber('price');
+            const itemIdToSell = getItemIdByName(itemName);
+            if (!itemIdToSell) return interaction.editReply({ content: 'Invalid item name.' });
+            if (quantity <= 0 || price <= 0) return interaction.editReply({ content: 'Quantity and price must be positive.' });
+            if ((account.inventory[itemIdToSell] || 0) < quantity) return interaction.editReply({ content: 'You do not have enough of that item to sell.' });
+            await modifyInventory(account._id, itemIdToSell, -quantity);
+            // --- CHANGE 3: Pass collection to the function ---
+            const newListingId = await findNextAvailableListingId(marketCollection);
+            await marketCollection.insertOne({ listingId: newListingId, sellerId: account._id, sellerName: account._id, itemId: itemIdToSell, quantity, price });
+            await interaction.editReply({ content: `You listed ${quantity}x ${ITEMS[itemIdToSell].name} for sale. Listing ID: **${newListingId}**` });
+            break;
         case 'marketbuy': 
             listingId = options.getInteger('listing_id');
             const listingToBuy = await marketCollection.findOne({ listingId: listingId });
@@ -159,13 +230,11 @@ async function handleSlashCommand(interaction) {
             await updateAccount(account._id, { balance: account.balance - totalCost });
             await modifyInventory(account._id, listingToBuy.itemId, listingToBuy.quantity);
             
-            // --- BUG FIX 2: Race Condition Fix ---
             const sellerAccount = await getAccount(listingToBuy.sellerId);
             if (sellerAccount) {
                 const earnings = totalCost * (1 - MARKET_TAX_RATE);
                 await economyCollection.updateOne({ _id: sellerAccount._id }, { $inc: { balance: earnings } });
             }
-            // --- END FIX ---
             
             await marketCollection.deleteOne({ _id: listingToBuy._id });
             await interaction.editReply({ content: `You bought ${listingToBuy.quantity}x ${ITEMS[listingToBuy.itemId].name}!` });
@@ -243,12 +312,11 @@ app.post('/command', async (req, res) => {
                 if (!itemId || isNaN(qty) || isNaN(price) || qty <= 0 || price <= 0) { responseMessage = "Invalid format."; } 
                 else if ((account.inventory[itemId] || 0) < qty) { responseMessage = "You don't have enough of that item."; } 
                 else { 
-                    await modifyInventory(account._id, itemId, -qty); 
-                    const newListingId = await findNextAvailableListingId(); 
-                    // --- BUG FIX 1: Use `account._id` instead of `account.id` ---
+                    await modifyInventory(account._id, itemId, -qty);
+                    // --- CHANGE 3: Pass collection to the function ---
+                    const newListingId = await findNextAvailableListingId(marketCollection);
                     await marketCollection.insertOne({ listingId: newListingId, sellerId: account._id, sellerName: account._id, itemId, quantity: qty, price });
-                    // --- END FIX --- 
-                    responseMessage = `Listed ${qty}x ${ITEMS[itemId].name}. ID: ${newListingId}`; 
+                    responseMessage = `Listed ${qty}x ${ITEMS[itemId].name}. ID: ${newListingId}`;
                 } 
             } 
             break;
@@ -265,13 +333,11 @@ app.post('/command', async (req, res) => {
                     await updateAccount(account._id, { balance: account.balance - totalCost }); 
                     await modifyInventory(account._id, listingToBuy.itemId, listingToBuy.quantity); 
                     
-                    // --- BUG FIX 2: Race Condition Fix ---
                     const sellerAccount = await getAccount(listingToBuy.sellerId);
                     if (sellerAccount) {
                         const earnings = totalCost * (1 - MARKET_TAX_RATE);
                         await economyCollection.updateOne({ _id: sellerAccount._id }, { $inc: { balance: earnings } });
                     }
-                    // --- END FIX ---
 
                     await marketCollection.deleteOne({ _id: listingToBuy._id }); 
                     responseMessage = `You bought ${listingToBuy.quantity}x ${ITEMS[listingToBuy.itemId].name}!`; 
