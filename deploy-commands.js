@@ -26,7 +26,7 @@ const commands = [
     { name: 'smelt', description: 'Smelt ores into ingots.', options: [ { name: 'ore_name', type: 3, description: 'The type of ore to smelt (e.g., Iron Ore)', required: true }, { name: 'quantity', type: 4, description: 'How many ores to smelt', required: true }] },
     { name: 'pay', description: 'Give Bits to another player.', options: [ { name: 'user', type: 6, description: 'The Discord user to pay', required: true }, { name: 'amount', type: 4, description: 'The amount of Bits to give', required: true }] },
 
-    // --- NEW LOOTBOX COMMANDS ---
+    // Lootbox Commands
     { 
         name: 'crateshop', 
         description: "View The Collector's special crates for sale." 
@@ -38,8 +38,16 @@ const commands = [
             { 
                 name: 'crate_name', 
                 type: 3, // String
-                description: "The name of the crate you want to open (e.g., Miner's Crate)", 
-                required: true 
+                description: "The name of the crate you want to open.", 
+                required: true,
+                // --- THIS IS THE CHANGE ---
+                // Adding choices makes it a dropdown for the user, preventing typos.
+                choices: [
+                    { name: "Miner's Crate", value: "Miner's Crate" },
+                    { name: "Builder's Crate", value: "Builder's Crate" },
+                    { name: "Gambler's Crate", value: "Gambler's Crate" },
+                    { name: "Crystal Crate", value: "Crystal Crate" },
+                ]
             },
             { 
                 name: 'amount', 
@@ -55,7 +63,6 @@ const rest = new REST({ version: '10' }).setToken(token);
 (async () => {
     try {
         console.log(`Registering ${commands.length} application (/) commands.`);
-        // Use Routes.applicationCommands(clientId) for global commands
         await rest.put(Routes.applicationCommands(clientId), { body: commands });
         console.log('✅ Successfully reloaded application (/) commands.');
     } catch (error) { 
