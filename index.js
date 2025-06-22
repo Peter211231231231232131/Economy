@@ -22,7 +22,7 @@ let userPaginationData = {};
 async function connectToDatabase() { try { await mongoClient.connect(); console.log("Connected to MongoDB!"); const db = mongoClient.db("drednot_economy"); economyCollection = db.collection("players"); verificationsCollection = db.collection("verifications"); marketCollection = db.collection("market_listings"); } catch (error) { console.error("DB connection failed", error); process.exit(1); } }
 
 // =========================================================================
-// --- ECONOMY DEFINITIONS ---
+// --- ECONOMY DEFINITIONS & HELPERS ---
 // =========================================================================
 const CURRENCY_NAME = 'Bits';
 const STARTING_BALANCE = 30;
@@ -41,9 +41,6 @@ const SLOTS_PAYOUTS = { three_of_a_kind: 15, two_of_a_kind: 3.5, jackpot_symbol:
 const VENDOR_TICK_INTERVAL_MINUTES = 5;
 const VENDORS = [ { name: "TerraNova Exports", sellerId: "NPC_TERRA", stock: [ { itemId: 'wood', quantity: 20, price: 1 }, { itemId: 'stone', quantity: 20, price: 1 } ], chance: 0.5 }, { name: "Nexus Logistics", sellerId: "NPC_NEXUS", stock: [ { itemId: 'basic_pickaxe', quantity: 1, price: 15 }, { itemId: 'sturdy_pickaxe', quantity: 1, price: 75 } ], chance: 0.3 }, { name: "Blackrock Mining Co.", sellerId: "NPC_BLACKROCK", stock: [ { itemId: 'coal', quantity: 15, price: 2 }, { itemId: 'iron_ore', quantity: 10, price: 3 } ], chance: 0.4 }, { name: "Copperline Inc.", sellerId: "NPC_COPPER", stock: [ { itemId: 'copper_ore', quantity: 10, price: 4 } ], chance: 0.2 }, { name: "Junk Peddler", sellerId: "NPC_JUNK", stock: [ { itemId: 'stone', quantity: 5, price: 1 }, { itemId: 'wood', quantity: 5, price: 1 } ], chance: 0.6 } ];
 
-// =========================================================================
-// --- DATABASE & COMMAND HANDLERS ---
-// =========================================================================
 async function getAccount(identifier) { const idStr = String(identifier).toLowerCase(); return await economyCollection.findOne({ $or: [{ _id: idStr }, { discordId: String(identifier) }] }); }
 async function createNewAccount(drednotName) { const lowerName = drednotName.toLowerCase(); const newAccount = { _id: lowerName, balance: STARTING_BALANCE, discordId: null, lastWork: null, lastGather: null, lastDaily: null, lastSlots: null, inventory: {}, smelting: null }; await economyCollection.insertOne(newAccount); return newAccount; }
 async function updateAccount(accountId, updates) { await economyCollection.updateOne({ _id: accountId.toLowerCase() }, { $set: updates }); }
@@ -75,9 +72,7 @@ async function processFinishedSmelting() { const now = Date.now(); const finishe
 // =========================================================================
 client.on('ready', () => console.log(`Discord bot logged in as ${client.user.tag}!`));
 client.on('interactionCreate', async (interaction) => { try { if (interaction.isChatInputCommand()) await handleSlashCommand(interaction); else if (interaction.isButton()) await handleButtonInteraction(interaction); } catch (error) { console.error("Error handling interaction:", error); if (interaction.replied || interaction.deferred) await interaction.editReply({ content: 'An unexpected error occurred!', components: [] }); }});
-
 async function handleButtonInteraction(interaction) { const [action, type, userId] = interaction.customId.split('_'); if (interaction.user.id !== userId) return interaction.reply({ content: "You cannot use these buttons.", ephemeral: true }); const session = userPaginationData[userId]; if (!session) return interaction.update({ content: 'This interactive message has expired or is invalid.', components: [] }); const pageChange = (type === 'next') ? 1 : -1; const { discord } = getPaginatedResponse(userId, session.type, session.lines, session.title, pageChange); await interaction.update(discord); }
-
 async function handleSlashCommand(interaction) {
     const { commandName, user, options } = interaction;
     await interaction.deferReply({ ephemeral: true });
@@ -139,11 +134,11 @@ app.post('/command', async (req, res) => {
     if (command === 'verify') { const code = args[0]; const verificationData = await verificationsCollection.findOne({ _id: code }); if (!verificationData || (Date.now() - verificationData.timestamp > 5 * 60 * 1000)) { responseMessage = 'That verification code is invalid or has expired.'; } else if (verificationData.drednotName.toLowerCase() !== username.toLowerCase()) { responseMessage = 'This verification code is for a different Drednot user.'; } else { let targetAccount = await getAccount(username); if (!targetAccount) targetAccount = await createNewAccount(username); await updateAccount(targetAccount._id, { discordId: verificationData.discordId }); await verificationsCollection.deleteOne({ _id: code }); responseMessage = `✅ Verification successful! Your accounts are now linked.`; try { const discordUser = await client.users.fetch(verificationData.discordId); discordUser.send(`Great news! Your link to the Drednot account **${username}** has been successfully verified.`); } catch (e) { console.log("Couldn't send DM confirmation."); } } return res.json({ reply: responseMessage }); }
     if (['n', 'next', 'p', 'back'].includes(command)) { const session = userPaginationData[identifier]; if (!session) return res.json({ reply: 'You have no active list to navigate.' }); const pageChange = (command === 'n' || command === 'next') ? 1 : -1; const { game } = getPaginatedResponse(identifier, session.type, session.lines, session.title, pageChange); return res.json({ reply: game.map(line => line.replace(/\*\*|`|>/g, '')) }); }
     let account = await getAccount(username);
-    if (!account) { account = await createNewAccount(username); return res.json({ reply: `Welcome, ${username}! Account created with 30 ${CURRENCY_NAME}. In Discord, use \`/link ${username}\` to link.` }); }
+    if (!account) { account = await createNewAccount(username); return res.json({ reply: `Welcome, ${username}! Account created with ${STARTING_BALANCE} ${CURRENCY_NAME}. In Discord, use \`/link ${username}\` to link.` }); }
     let result, lines, title; const cleanText = (text) => Array.isArray(text) ? text.map(t => t.replace(/\*\*|`|>/g, '')) : String(text).replace(/\*\*|`|>/g, '');
     switch (command) {
-        case 'm': case 'market': const marketFilter = args.length > 0 ? args.join(' ') : null; lines = await handleMarket(marketFilter); title = marketFilter ? `Market (Filter: ${marketFilter})` : "Market"; result = getPaginatedResponse(identifier, 'market', lines, title, 0); responseMessage = result.game.map(line => cleanText(line)); break;
-        case 'lb': case 'leaderboard': lines = await handleLeaderboard(); title = "Leaderboard"; result = getPaginatedResponse(identifier, 'leaderboard', lines, title, 0); responseMessage = result.game.map(line => cleanText(line)); break;
+        case 'market': const marketFilter = args.length > 0 ? args.join(' ') : null; lines = await handleMarket(marketFilter); title = marketFilter ? `Market (Filter: ${marketFilter})` : "Market"; result = getPaginatedResponse(identifier, 'market', lines, title, 0); responseMessage = result.game.map(line => cleanText(line)); break;
+        case 'leaderboard': lines = await handleLeaderboard(); title = "Leaderboard"; result = getPaginatedResponse(identifier, 'leaderboard', lines, title, 0); responseMessage = result.game.map(line => cleanText(line)); break;
         case 'recipes': lines = handleRecipes().split('\n'); title = lines.shift(); result = getPaginatedResponse(identifier, 'recipes', lines, title, 0); responseMessage = result.game.map(line => cleanText(line)); break;
         case 'bal': case 'balance': responseMessage = `${username}, your balance is: ${account.balance} ${CURRENCY_NAME}.`; break;
         case 'work': result = await handleWork(account); responseMessage = `${username}, ${result.message}`; break;
@@ -153,7 +148,7 @@ app.post('/command', async (req, res) => {
         case 'daily': result = await handleDaily(account); responseMessage = `${username}, ${result.message}`; break;
         case 'flip': if (args.length < 2) { responseMessage = "Usage: !flip <amount> <heads/tails>"; } else { result = await handleFlip(account, parseInt(args[0]), args[1].toLowerCase()); responseMessage = `${username}, ${result.message}`; } break;
         case 'slots': if (args.length < 1) { responseMessage = "Usage: !slots <amount>"; } else { result = await handleSlots(account, parseInt(args[0])); responseMessage = `${username}, ${result.message}`; } break;
-        case 'timer': case 'timers': result = handleTimers(account); responseMessage = result.map(line => cleanText(line)); break;
+        case 'timers': result = handleTimers(account); responseMessage = result.map(line => cleanText(line)); break;
         case 'smelt': if (args.length < 2) { responseMessage = "Usage: !smelt <ore name> <quantity>"; } else { const oreName = args.slice(0, -1).join(' '); const quantity = parseInt(args[args.length - 1]); result = await handleSmelt(account, oreName, quantity); responseMessage = result.message; } break;
         case 'pay': if (args.length < 2) { responseMessage = "Usage: !pay <username> <amount>"; } else { const amountToPay = parseInt(args[args.length - 1]); const recipientName = args.slice(0, -1).join(' '); const recipientAccount = await getAccount(recipientName); if (!recipientAccount) { responseMessage = `Could not find a player named "${recipientName}".`; } else { result = await handlePay(account, recipientAccount, amountToPay); responseMessage = result.message.replace(/\*/g, ''); } } break;
         case 'ms': case 'marketsell': if (args.length < 3) { responseMessage = "Usage: !marketsell <item name> <qty> <price>"; } else { const itemName = args.slice(0, -2).join(' '); const qty = parseInt(args[args.length - 2]); const price = parseFloat(args[args.length - 1]); const itemId = getItemIdByName(itemName); if (!itemId || isNaN(qty) || isNaN(price) || qty <= 0 || price <= 0) { responseMessage = "Invalid format."; } else if ((account.inventory[itemId] || 0) < qty) { responseMessage = "You don't have enough of that item."; } else { await modifyInventory(account._id, itemId, -qty); const newListingId = await findNextAvailableListingId(); await marketCollection.insertOne({ listingId: newListingId, sellerId: account._id, sellerName: account._id, itemId, quantity: qty, price }); responseMessage = `Listed ${qty}x ${ITEMS[itemId].name}. ID: ${newListingId}`; } } break;
