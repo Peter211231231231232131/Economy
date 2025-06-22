@@ -209,13 +209,11 @@ app.post('/command', async (req, res) => {
     let account = await getAccount(username);
     if (!account) { 
         account = await createNewAccount(username); 
-        const welcomeMessage = [
-            `===== WELCOME TO ECONOMY SEASON 2! =====`,
-            `Due to an unexpected issue, all data has been reset for a fresh start. We apologize for any inconvenience.`,
-            `Your new account has been created with ${STARTING_BALANCE} Bits.`,
-            `Join the Discord for updates, support, and commands!`,
+        const welcomeMessage = 
+            `Successfully registed!`
+            `Join the Discord for for a better experience`,
             `https://discord.gg/SvZe9ytB`,
-            `NOTE: Use !link in-game to verify with your Discord account.`
+            `NOTE: Use !link in-game to verify with your Discord account (Discord bot uses / instead of !).`
         ];
         return res.json({ reply: welcomeMessage });
     }
