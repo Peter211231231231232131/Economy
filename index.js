@@ -30,7 +30,7 @@ async function connectToDatabase() {
 }
 
 // =========================================================================
-// --- ECONOMY DEFINITIONS ---
+// --- ECONOMY DEFINITIONS (with Emojis) ---
 // =========================================================================
 const CURRENCY_NAME = 'Bits';
 const STARTING_BALANCE = 30;
@@ -42,14 +42,25 @@ const FLIP_MIN_BET = 5, FLIP_MAX_BET = 100;
 const SLOTS_MIN_BET = 10, SLOTS_MAX_BET = 1500, SLOTS_COOLDOWN_SECONDS = 5;
 
 const ITEMS = {
-    'iron_ore': { name: "Iron Ore", description: "A common metallic ore." },
-    'copper_ore': { name: "Copper Ore", description: "A reddish-brown metallic ore." },
-    'stone': { name: "Stone", description: "A basic building material." },
-    'wood': { name: "Wood", description: "A basic building material." },
-    'coal': { name: "Coal", description: "A combustible rock, used as fuel." },
-    'basic_pickaxe': { name: "Basic Pickaxe", description: "A simple pickaxe.", craftable: true, recipe: { 'stone': 5, 'wood': 2 } },
-    'sturdy_pickaxe': { name: "Sturdy Pickaxe", description: `Slightly increases earnings from work.`, craftable: true, recipe: { 'iron_ore': 10, 'wood': 3, 'coal': 2 } },
+    'iron_ore':   { name: "Iron Ore",       emoji: "🔩" },
+    'copper_ore': { name: "Copper Ore",     emoji: "🟤" },
+    'stone':      { name: "Stone",          emoji: "🪨" },
+    'wood':       { name: "Wood",           emoji: "🪵" },
+    'coal':       { name: "Coal",           emoji: "⚫" },
+    'basic_pickaxe': { 
+        name: "Basic Pickaxe",  
+        emoji: "⛏️", 
+        craftable: true, 
+        recipe: { 'stone': 5, 'wood': 2 } 
+    },
+    'sturdy_pickaxe': { 
+        name: "Sturdy Pickaxe", 
+        emoji: "⚒️", 
+        craftable: true, 
+        recipe: { 'iron_ore': 10, 'wood': 3, 'coal': 2 } 
+    },
 };
+
 const GATHER_TABLE = { 'iron_ore': { baseChance: 0.60, minQty: 1, maxQty: 3 }, 'copper_ore': { baseChance: 0.40, minQty: 1, maxQty: 2 }, 'stone': { baseChance: 0.70, minQty: 2, maxQty: 5 }, 'wood': { baseChance: 0.50, minQty: 1, maxQty: 4 }, 'coal': { baseChance: 0.30, minQty: 1, maxQty: 2 } };
 const SLOT_REELS = [ ['🍒', '🍋', '🍊', '🍉', '⭐', '🔔', '💎', '💰', '💔'], ['🍒', '🍋', '🍊', '🍉', '⭐', '🔔', '💎', '💰', '💔'], ['🍒', '🍋', '🍊', '🍉', '⭐', '🔔', '💎', '💰', '💔']];
 const SLOTS_PAYOUTS = { three_of_a_kind: 15, two_of_a_kind: 3.5, jackpot_symbol: '💎', jackpot_multiplier: 50 };
@@ -68,9 +79,9 @@ function formatDuration(seconds) { if (seconds < 60) return `${Math.ceil(seconds
 // --- COMMAND HANDLER LOGIC ---
 // =========================================================================
 async function handleWork(account) { const now = Date.now(); const cooldown = WORK_COOLDOWN_MINUTES * 60 * 1000; if (account.lastWork && (now - account.lastWork) < cooldown) { const remaining = cooldown - (now - account.lastWork); return { success: false, message: `You are on cooldown. Wait ${formatDuration(remaining / 1000)}.` }; } const earnings = Math.floor(Math.random() * (WORK_REWARD_MAX - WORK_REWARD_MIN + 1)) + WORK_REWARD_MIN; await updateAccount(account._id, { balance: account.balance + earnings, lastWork: now }); return { success: true, message: `You earned ${earnings} ${CURRENCY_NAME}! New balance is ${account.balance + earnings}.` }; }
-async function handleGather(account) { const now = Date.now(); const cooldown = GATHER_COOLDOWN_MINUTES * 60 * 1000; if (account.lastGather && (now - account.lastGather) < cooldown) { const remaining = cooldown - (now - account.lastGather); return { success: false, message: `You are tired. Wait ${formatDuration(remaining / 1000)}.` }; } let gatheredItems = []; let updates = {}; for (const itemId in GATHER_TABLE) { if (Math.random() < GATHER_TABLE[itemId].baseChance) { const qty = Math.floor(Math.random() * (GATHER_TABLE[itemId].maxQty - GATHER_TABLE[itemId].minQty + 1)) + GATHER_TABLE[itemId].minQty; updates[`inventory.${itemId}`] = qty; gatheredItems.push(`${qty}x ${ITEMS[itemId].name}`); } } await economyCollection.updateOne({ _id: account._id }, { $inc: updates, $set: { lastGather: now } }); if (gatheredItems.length === 0) return { success: true, message: 'You searched but found nothing.' }; return { success: true, message: `You gathered: ${gatheredItems.join(', ')}.` }; }
-function handleInventory(account) { if (!account.inventory || Object.keys(account.inventory).length === 0) return 'Your inventory is empty.'; let invList = ['Your inventory:']; for (const itemId in account.inventory) { if (account.inventory[itemId] > 0) invList.push(`- ${account.inventory[itemId]}x ${ITEMS[itemId]?.name || itemId}`); } return invList.length > 1 ? invList.join('\n') : 'Your inventory is empty.'; }
-function handleRecipes() { let recipeList = ['**Available Recipes:**']; for (const itemId in ITEMS) { if (ITEMS[itemId].craftable) { const recipeParts = Object.entries(ITEMS[itemId].recipe).map(([resId, qty]) => `${qty}x ${ITEMS[resId].name}`); recipeList.push(`- **${ITEMS[itemId].name}**: Requires ${recipeParts.join(', ')}`); } } return recipeList.length > 1 ? recipeList.join('\n') : 'There are no craftable items yet.'; }
+async function handleGather(account) { const now = Date.now(); const cooldown = GATHER_COOLDOWN_MINUTES * 60 * 1000; if (account.lastGather && (now - account.lastGather) < cooldown) { const remaining = cooldown - (now - account.lastGather); return { success: false, message: `You are tired. Wait ${formatDuration(remaining / 1000)}.` }; } let gatheredItems = []; let updates = {}; for (const itemId in GATHER_TABLE) { if (Math.random() < GATHER_TABLE[itemId].baseChance) { const qty = Math.floor(Math.random() * (GATHER_TABLE[itemId].maxQty - GATHER_TABLE[itemId].minQty + 1)) + GATHER_TABLE[itemId].minQty; updates[`inventory.${itemId}`] = qty; gatheredItems.push(`${ITEMS[itemId].emoji} ${qty}x ${ITEMS[itemId].name}`); } } await economyCollection.updateOne({ _id: account._id }, { $inc: updates, $set: { lastGather: now } }); if (gatheredItems.length === 0) return { success: true, message: 'You searched but found nothing of value.' }; return { success: true, message: `You gathered: ${gatheredItems.join(', ')}` }; }
+function handleInventory(account) { if (!account.inventory || Object.keys(account.inventory).length === 0) return 'Your inventory is empty.'; let invList = ['🎒 **Your Inventory:**']; for (const itemId in account.inventory) { if (account.inventory[itemId] > 0) { invList.push(`> ${ITEMS[itemId]?.emoji || '❓'} ${account.inventory[itemId]}x ${ITEMS[itemId]?.name || itemId}`); } } return invList.length > 1 ? invList.join('\n') : 'Your inventory is empty.'; }
+function handleRecipes() { let recipeList = ['📜 **Available Recipes:**']; for (const itemId in ITEMS) { if (ITEMS[itemId].craftable) { const recipeParts = Object.entries(ITEMS[itemId].recipe).map(([resId, qty]) => `${ITEMS[resId].emoji} ${qty}x ${ITEMS[resId].name}`); recipeList.push(`> ${ITEMS[itemId].emoji} **${ITEMS[itemId].name}**: Requires ${recipeParts.join(', ')}`); } } return recipeList.length > 1 ? recipeList.join('\n') : 'There are no craftable items yet.'; }
 async function handleCraft(account, itemName) { const itemToCraftId = getItemIdByName(itemName); if (!itemToCraftId || !ITEMS[itemToCraftId].craftable) return `"${itemName}" is not a valid, craftable item. Check \`/recipes\`.`; const recipe = ITEMS[itemToCraftId].recipe; for (const resId in recipe) { const requiredQty = recipe[resId]; const playerQty = account.inventory[resId] || 0; if (playerQty < requiredQty) return `You don't have enough resources! You need ${requiredQty - playerQty} more ${ITEMS[resId].name}.`; } for (const resId in recipe) await modifyInventory(account._id, resId, -recipe[resId]); await modifyInventory(account._id, itemToCraftId, 1); return `You successfully crafted 1x ${ITEMS[itemToCraftId].name}!`; }
 async function handleDaily(account) { const now = new Date(); const lastDaily = account.lastDaily ? new Date(account.lastDaily) : null; if (lastDaily && now.toDateString() === lastDaily.toDateString()) return { success: false, message: "You have already claimed your daily reward today. Come back tomorrow!" }; await updateAccount(account._id, { balance: account.balance + DAILY_REWARD, lastDaily: now }); return { success: true, message: `You claimed your daily ${DAILY_REWARD} ${CURRENCY_NAME}! Your new balance is ${account.balance + DAILY_REWARD}.` }; }
 async function handleFlip(account, amount, choice) { if (amount < FLIP_MIN_BET || amount > FLIP_MAX_BET) return { success: false, message: `Your bet must be between ${FLIP_MIN_BET} and ${FLIP_MAX_BET} ${CURRENCY_NAME}.` }; if (account.balance < amount) return { success: false, message: "You don't have enough bits for that bet." }; const result = Math.random() < 0.5 ? 'heads' : 'tails'; if (result === choice) { await updateAccount(account._id, { balance: account.balance + amount }); return { success: true, message: `It was ${result}! You win ${amount} ${CURRENCY_NAME}! New balance: ${account.balance + amount}.` }; } else { await updateAccount(account._id, { balance: account.balance - amount }); return { success: false, message: `It was ${result}. You lost ${amount} ${CURRENCY_NAME}. New balance: ${account.balance - amount}.` }; } }
@@ -169,8 +180,8 @@ app.post('/command', async (req, res) => {
         case 'bal': case 'balance': responseMessage = `${username}, your balance is: ${account.balance} ${CURRENCY_NAME}.`; break;
         case 'work': result = await handleWork(account); responseMessage = `${username}, ${result.message}`; break;
         case 'gather': result = await handleGather(account); responseMessage = `${username}, ${result.message}`; break;
-        case 'inv': case 'inventory': responseMessage = handleInventory(account); break;
-        case 'recipes': responseMessage = handleRecipes().replace(/\*\*/g, ''); break; // Remove bold for in-game
+        case 'inv': case 'inventory': responseMessage = handleInventory(account).replace(/\>|\*|🎒/g, ''); break; // Remove Discord formatting for in-game
+        case 'recipes': responseMessage = handleRecipes().replace(/\>|\*|📜/g, ''); break;
         case 'craft': 
             if (args.length === 0) { responseMessage = "Usage: !craft <item name>"; }
             else {
@@ -181,8 +192,8 @@ app.post('/command', async (req, res) => {
         case 'daily': result = await handleDaily(account); responseMessage = `${username}, ${result.message}`; break;
         case 'flip': if (args.length < 2) { responseMessage = "Usage: !flip <amount> <heads/tails>"; } else { result = await handleFlip(account, parseInt(args[0]), args[1].toLowerCase()); responseMessage = `${username}, ${result.message}`; } break;
         case 'slots': if (args.length < 1) { responseMessage = "Usage: !slots <amount>"; } else { result = await handleSlots(account, parseInt(args[0])); responseMessage = `${username}, ${result.message}`; } break;
-        case 'lb': case 'leaderboard': result = await handleLeaderboard(); responseMessage = result; break;
-        case 'm': case 'market': const listings = await marketCollection.find().limit(10).toArray(); if (listings.length === 0) { responseMessage = 'The market is empty.'; } else { responseMessage = [`**Market Listings:**`].concat(listings.map(l => `(ID: ${l._id.toString().slice(-6)}) ${l.quantity}x ${ITEMS[l.itemId].name} @ ${l.price} Bits by ${l.sellerName}`)); } break;
+        case 'lb': case 'leaderboard': result = await handleLeaderboard(); responseMessage = result.map(line => line.replace(/\*/g, '')); break;
+        case 'm': case 'market': const listings = await marketCollection.find().limit(10).toArray(); if (listings.length === 0) { responseMessage = 'The market is empty.'; } else { responseMessage = [`**Market Listings:**`].concat(listings.map(l => `(ID: ${l._id.toString().slice(-6)}) ${l.quantity}x ${ITEMS[l.itemId].name} @ ${l.price} Bits by ${l.sellerName}`.replace(/\*/g, ''))); } break;
         case 'ms': case 'marketsell': if (args.length < 3) { responseMessage = "Usage: !marketsell <item name> <qty> <price>"; } else { const itemName = args.slice(0, -2).join(' '); const qty = parseInt(args[args.length - 2]); const price = parseFloat(args[args.length - 1]); const itemId = getItemIdByName(itemName); if (!itemId || isNaN(qty) || isNaN(price) || qty <= 0 || price <= 0) { responseMessage = "Invalid format. Usage: !ms <item name> <quantity> <price>"; } else if ((account.inventory[itemId] || 0) < qty) { responseMessage = "You don't have enough of that item."; } else { await modifyInventory(account._id, itemId, -qty); const listing = await marketCollection.insertOne({ sellerId: account._id, sellerName: account._id, itemId, quantity: qty, price }); responseMessage = `Listed ${qty}x ${ITEMS[itemId].name}. Listing ID: ${listing.insertedId.toString().slice(-6)}`; } } break;
         case 'mb': case 'marketbuy': if (args.length < 1) { responseMessage = "Usage: !marketbuy <listing_id>"; } else { let listingToBuy; try { const listingsArray = await marketCollection.find({}).toArray(); listingToBuy = listingsArray.find(l => l._id.toString().endsWith(args[0])); if (!listingToBuy) throw new Error(); } catch (e) { responseMessage = 'Invalid listing ID.'; break; } const totalCost = listingToBuy.quantity * listingToBuy.price; if (listingToBuy.sellerId === account._id) { responseMessage = "You can't buy your own listing."; } else if (account.balance < totalCost) { responseMessage = "You can't afford this."; } else { await updateAccount(account._id, { balance: account.balance - totalCost }); await modifyInventory(account._id, listingToBuy.itemId, listingToBuy.quantity); const sellerAccount = await getAccount(listingToBuy.sellerId); if (sellerAccount) await updateAccount(sellerAccount._id, { balance: sellerAccount.balance + (totalCost * (1 - MARKET_TAX_RATE)) }); await marketCollection.deleteOne({ _id: listingToBuy._id }); responseMessage = `You bought ${listingToBuy.quantity}x ${ITEMS[listingToBuy.itemId].name}!`; } } break;
         case 'mc': case 'marketcancel': if (args.length < 1) { responseMessage = "Usage: !marketcancel <listing_id>"; } else { let listingToCancel; try { const listingsArray = await marketCollection.find({}).toArray(); listingToCancel = listingsArray.find(l => l._id.toString().endsWith(args[0])); if (!listingToCancel) throw new Error(); } catch (e) { responseMessage = 'Invalid listing ID.'; break; } if (listingToCancel.sellerId !== account._id) { responseMessage = "This is not your listing."; } else { await modifyInventory(account._id, listingToCancel.itemId, listingToCancel.quantity); await marketCollection.deleteOne({ _id: listingToCancel._id }); responseMessage = `Cancelled your listing for ${listingToCancel.quantity}x ${ITEMS[listingToCancel.itemId].name}.`; } } break;
