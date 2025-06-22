@@ -10,7 +10,9 @@ app.use(express.json());
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers] });
 const YOUR_API_KEY = 'drednot123';
 
+// =========================================================================
 // --- MONGODB DATABASE SETUP ---
+// =========================================================================
 const mongoUri = process.env.MONGO_URI;
 if (!mongoUri) throw new Error("CRITICAL: MONGO_URI not found!");
 const mongoClient = new MongoClient(mongoUri);
@@ -27,7 +29,9 @@ async function connectToDatabase() {
     } catch (error) { console.error("Failed to connect to MongoDB", error); process.exit(1); }
 }
 
+// =========================================================================
 // --- ECONOMY DEFINITIONS ---
+// =========================================================================
 const CURRENCY_NAME = 'Bits';
 const STARTING_BALANCE = 30;
 const DAILY_REWARD = 25;
@@ -50,7 +54,9 @@ const GATHER_TABLE = { 'iron_ore': { baseChance: 0.60, minQty: 1, maxQty: 3 }, '
 const SLOT_REELS = [ ['🍒', '🍋', '🍊', '🍉', '⭐', '🔔', '💎', '💰', '💔'], ['🍒', '🍋', '🍊', '🍉', '⭐', '🔔', '💎', '💰', '💔'], ['🍒', '🍋', '🍊', '🍉', '⭐', '🔔', '💎', '💰', '💔']];
 const SLOTS_PAYOUTS = { three_of_a_kind: 15, two_of_a_kind: 3.5, jackpot_symbol: '💎', jackpot_multiplier: 50 };
 
+// =========================================================================
 // --- DATABASE HELPER FUNCTIONS ---
+// =========================================================================
 async function getAccount(identifier) { const idStr = String(identifier).toLowerCase(); return await economyCollection.findOne({ $or: [{ _id: idStr }, { discordId: String(identifier) }] }); }
 async function createNewAccount(drednotName) { const lowerName = drednotName.toLowerCase(); const newAccount = { _id: lowerName, balance: STARTING_BALANCE, discordId: null, lastWork: null, lastGather: null, lastDaily: null, lastSlots: null, inventory: {} }; await economyCollection.insertOne(newAccount); return newAccount; }
 async function updateAccount(accountId, updates) { await economyCollection.updateOne({ _id: accountId.toLowerCase() }, { $set: updates }); }
@@ -58,7 +64,9 @@ async function modifyInventory(accountId, itemId, amount) { if (!itemId) return;
 function getItemIdByName(name) { return Object.keys(ITEMS).find(k => ITEMS[k].name.toLowerCase() === name.toLowerCase()); }
 function formatDuration(seconds) { if (seconds < 60) return `${Math.ceil(seconds)}s`; const minutes = Math.floor(seconds / 60); const remainingSeconds = Math.ceil(seconds % 60); return `${minutes}m ${remainingSeconds}s`; }
 
+// =========================================================================
 // --- COMMAND HANDLER LOGIC ---
+// =========================================================================
 async function handleWork(account) { const now = Date.now(); const cooldown = WORK_COOLDOWN_MINUTES * 60 * 1000; if (account.lastWork && (now - account.lastWork) < cooldown) { const remaining = cooldown - (now - account.lastWork); return { success: false, message: `You are on cooldown. Wait ${formatDuration(remaining / 1000)}.` }; } const earnings = Math.floor(Math.random() * (WORK_REWARD_MAX - WORK_REWARD_MIN + 1)) + WORK_REWARD_MIN; await updateAccount(account._id, { balance: account.balance + earnings, lastWork: now }); return { success: true, message: `You earned ${earnings} ${CURRENCY_NAME}! New balance is ${account.balance + earnings}.` }; }
 async function handleGather(account) { const now = Date.now(); const cooldown = GATHER_COOLDOWN_MINUTES * 60 * 1000; if (account.lastGather && (now - account.lastGather) < cooldown) { const remaining = cooldown - (now - account.lastGather); return { success: false, message: `You are tired. Wait ${formatDuration(remaining / 1000)}.` }; } let gatheredItems = []; let updates = {}; for (const itemId in GATHER_TABLE) { if (Math.random() < GATHER_TABLE[itemId].baseChance) { const qty = Math.floor(Math.random() * (GATHER_TABLE[itemId].maxQty - GATHER_TABLE[itemId].minQty + 1)) + GATHER_TABLE[itemId].minQty; updates[`inventory.${itemId}`] = qty; gatheredItems.push(`${qty}x ${ITEMS[itemId].name}`); } } await economyCollection.updateOne({ _id: account._id }, { $inc: updates, $set: { lastGather: now } }); if (gatheredItems.length === 0) return { success: true, message: 'You searched but found nothing.' }; return { success: true, message: `You gathered: ${gatheredItems.join(', ')}.` }; }
 function handleInventory(account) { if (!account.inventory || Object.keys(account.inventory).length === 0) return 'Your inventory is empty.'; let invList = ['Your inventory:']; for (const itemId in account.inventory) { if (account.inventory[itemId] > 0) invList.push(`- ${account.inventory[itemId]}x ${ITEMS[itemId]?.name || itemId}`); } return invList.length > 1 ? invList.join('\n') : 'Your inventory is empty.'; }
@@ -162,8 +170,14 @@ app.post('/command', async (req, res) => {
         case 'work': result = await handleWork(account); responseMessage = `${username}, ${result.message}`; break;
         case 'gather': result = await handleGather(account); responseMessage = `${username}, ${result.message}`; break;
         case 'inv': case 'inventory': responseMessage = handleInventory(account); break;
-        case 'recipes': responseMessage = handleRecipes(); break;
-        case 'craft': responseMessage = await handleCraft(account, args.join(' ')); break;
+        case 'recipes': responseMessage = handleRecipes().replace(/\*\*/g, ''); break; // Remove bold for in-game
+        case 'craft': 
+            if (args.length === 0) { responseMessage = "Usage: !craft <item name>"; }
+            else {
+                let craftResult = await handleCraft(account, args.join(' '));
+                responseMessage = craftResult.replace('`/recipes`', '`!recipes`');
+            }
+            break;
         case 'daily': result = await handleDaily(account); responseMessage = `${username}, ${result.message}`; break;
         case 'flip': if (args.length < 2) { responseMessage = "Usage: !flip <amount> <heads/tails>"; } else { result = await handleFlip(account, parseInt(args[0]), args[1].toLowerCase()); responseMessage = `${username}, ${result.message}`; } break;
         case 'slots': if (args.length < 1) { responseMessage = "Usage: !slots <amount>"; } else { result = await handleSlots(account, parseInt(args[0])); responseMessage = `${username}, ${result.message}`; } break;
