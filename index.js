@@ -50,9 +50,18 @@ const ITEMS = {
     'basic_pickaxe': { name: "Basic Pickaxe", emoji: "⛏️", craftable: true, recipe: { 'stone': 5, 'wood': 2 } },
     'sturdy_pickaxe': { name: "Sturdy Pickaxe", emoji: "⚒️", craftable: true, recipe: { 'iron_ore': 10, 'wood': 3, 'coal': 2 } },
 };
+
 const GATHER_TABLE = { 'iron_ore': { baseChance: 0.60, minQty: 1, maxQty: 3 }, 'copper_ore': { baseChance: 0.40, minQty: 1, maxQty: 2 }, 'stone': { baseChance: 0.70, minQty: 2, maxQty: 5 }, 'wood': { baseChance: 0.50, minQty: 1, maxQty: 4 }, 'coal': { baseChance: 0.30, minQty: 1, maxQty: 2 } };
 const SLOT_REELS = [ ['🍒', '🍋', '🍊', '🍉', '⭐', '🔔', '💎', '💰', '💔'], ['🍒', '🍋', '🍊', '🍉', '⭐', '🔔', '💎', '💰', '💔'], ['🍒', '🍋', '🍊', '🍉', '⭐', '🔔', '💎', '💰', '💔']];
 const SLOTS_PAYOUTS = { three_of_a_kind: 15, two_of_a_kind: 3.5, jackpot_symbol: '💎', jackpot_multiplier: 50 };
+
+// --- NPC VENDOR CONFIGURATION ---
+const NEXUS_SELLER_NAME = "Nexus Logistics";
+const NEXUS_SUPPLY_DROP_INTERVAL_MINUTES = 45;
+const NEXUS_SUPPLY_DROP_ITEMS = [ { itemId: 'basic_pickaxe', weight: 5, price: 15 }, { itemId: 'sturdy_pickaxe', weight: 2, price: 75 } ];
+const COMP5_SELLER_NAME = "TerraNova Exports";
+const COMP5_SALES_INTERVAL_MINUTES = 20;
+const COMP5_SALES_ITEMS = [ { itemId: 'wood', quantity: 20, price: 1 }, { itemId: 'stone', quantity: 20, price: 1 }, { itemId: 'coal', quantity: 15, price: 2 }, { itemId: 'iron_ore', quantity: 10, price: 3 } ];
 
 // =========================================================================
 // --- DATABASE HELPER FUNCTIONS ---
@@ -77,10 +86,14 @@ async function handleFlip(account, amount, choice) { if (isNaN(amount) || amount
 async function handleSlots(account, amount) { const now = Date.now(); const cooldown = SLOTS_COOLDOWN_SECONDS * 1000; if (account.lastSlots && (now - account.lastSlots) < cooldown) { const remaining = cooldown - (now - account.lastSlots); return { success: false, message: `Slow down! You can play slots again in ${formatDuration(remaining / 1000)}.` }; } if (isNaN(amount) || amount < SLOTS_MIN_BET || amount > SLOTS_MAX_BET) return { success: false, message: `Your bet must be between ${SLOTS_MIN_BET} and ${SLOTS_MAX_BET} ${CURRENCY_NAME}.` }; if (account.balance < amount) return { success: false, message: "You don't have enough bits for that bet." }; await updateAccount(account._id, { lastSlots: now }); const s1 = SLOT_REELS[0][Math.floor(Math.random() * SLOT_REELS[0].length)]; const s2 = SLOT_REELS[1][Math.floor(Math.random() * SLOT_REELS[1].length)]; const s3 = SLOT_REELS[2][Math.floor(Math.random() * SLOT_REELS[2].length)]; const resultString = `[ ${s1} | ${s2} | ${s3} ]`; let winMultiplier = 0; let winMessage = ''; if (s1 === s2 && s2 === s3) { winMultiplier = (s1 === SLOTS_PAYOUTS.jackpot_symbol) ? SLOTS_PAYOUTS.jackpot_multiplier : SLOTS_PAYOUTS.three_of_a_kind; winMessage = (s1 === SLOTS_PAYOUTS.jackpot_symbol) ? "JACKPOT! 💎" : "Three of a kind!"; } else if (s1 === s2 || s2 === s3 || s1 === s3) { winMultiplier = SLOTS_PAYOUTS.two_of_a_kind; winMessage = "Two of a kind!"; } let finalMessage, newBalance; if (winMultiplier > 0) { const winnings = Math.floor(amount * winMultiplier); newBalance = account.balance + winnings; finalMessage = `${resultString} - ${winMessage} You win ${winnings} ${CURRENCY_NAME}! New balance: ${newBalance}.`; await updateAccount(account._id, { balance: newBalance }); } else { newBalance = account.balance - amount; finalMessage = `${resultString} - You lost ${amount} ${CURRENCY_NAME}. New balance: ${newBalance}.`; await updateAccount(account._id, { balance: newBalance }); } return { success: true, message: finalMessage }; }
 async function handleLeaderboard() { const topPlayers = await economyCollection.find().sort({ balance: -1 }).limit(10).toArray(); if (topPlayers.length === 0) return ["The leaderboard is empty!"]; let lbMessage = [`**🏆 Top 10 Richest Players 🏆**`]; topPlayers.forEach((player, index) => { lbMessage.push(`${index + 1}. **${player._id}** - ${player.balance} ${CURRENCY_NAME}`); }); return lbMessage; }
 
+// --- NPC VENDOR LOGIC ---
+async function processNexusSupplyDrop() { if (Math.random() < 0.5) { const weightedList = []; NEXUS_SUPPLY_DROP_ITEMS.forEach(item => { for (let i = 0; i < item.weight; i++) weightedList.push(item); }); const selectedItem = weightedList[Math.floor(Math.random() * weightedList.length)]; await marketCollection.insertOne({ sellerId: "NPC_NEXUS", sellerName: NEXUS_SELLER_NAME, itemId: selectedItem.itemId, quantity: 1, price: selectedItem.price }); console.log(`Nexus listed 1x ${ITEMS[selectedItem.itemId].name} for sale!`); } }
+async function processComp5Sales() { if (Math.random() < 0.75) { const selectedItem = COMP5_SALES_ITEMS[Math.floor(Math.random() * COMP5_SALES_ITEMS.length)]; await marketCollection.insertOne({ sellerId: "NPC_COMP5", sellerName: COMP5_SELLER_NAME, itemId: selectedItem.itemId, quantity: selectedItem.quantity, price: selectedItem.price }); console.log(`TerraNova Exports listed ${selectedItem.quantity}x ${ITEMS[selectedItem.itemId].name} for sale!`); } }
+
 // =========================================================================
 // --- DISCORD BOT LOGIC ---
 // =========================================================================
-client.on('ready', () => console.log(`Discord bot logged in!`));
+client.on('ready', () => console.log(`Discord bot logged in as ${client.user.tag}!`));
 
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
@@ -169,7 +182,7 @@ app.post('/command', async (req, res) => {
         case 'bal': case 'balance': responseMessage = `${username}, your balance is: ${account.balance} ${CURRENCY_NAME}.`; break;
         case 'work': result = await handleWork(account); responseMessage = `${username}, ${result.message}`; break;
         case 'gather': result = await handleGather(account); responseMessage = `${username}, ${result.message}`; break;
-        case 'inv': case 'inventory': responseMessage = handleInventory(account).replace(/\>|\*|🎒|/g, ''); break; // Remove Discord formatting
+        case 'inv': case 'inventory': responseMessage = handleInventory(account).replace(/\>|\*|🎒|/g, ''); break;
         case 'recipes': responseMessage = handleRecipes().replace(/\>|\*|📜|/g, ''); break;
         case 'craft': 
             if (args.length === 0) { responseMessage = "Usage: !craft <item name>"; }
@@ -191,11 +204,27 @@ app.post('/command', async (req, res) => {
     res.json({ reply: responseMessage });
 });
 
+// =========================================================================
 // --- STARTUP ---
+// =========================================================================
 async function startServer() {
     await connectToDatabase();
-    await client.login(process.env.DISCORD_TOKEN);
-    app.listen(3000, () => console.log(`Web server is listening.`));
+    
+    // Start NPC vendor timers
+    console.log(`Starting NPC vendor timers...`);
+    setInterval(processNexusSupplyDrop, NEXUS_SUPPLY_DROP_INTERVAL_MINUTES * 60 * 1000);
+    setInterval(processComp5Sales, COMP5_SALES_INTERVAL_MINUTES * 60 * 1000);
+    
+    // Login to Discord and then start the web server
+    client.login(process.env.DISCORD_TOKEN).then(() => {
+        console.log("Discord bot has successfully logged in.");
+        app.listen(3000, () => {
+            console.log(`Web server is listening.`);
+        });
+    }).catch(error => {
+        console.error("Failed to log in to Discord:", error);
+        process.exit(1);
+    });
 }
 
 startServer();
