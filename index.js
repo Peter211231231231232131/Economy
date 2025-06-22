@@ -30,7 +30,7 @@ async function connectToDatabase() {
 }
 
 // =========================================================================
-// --- ECONOMY DEFINITIONS (with Emojis) ---
+// --- ECONOMY DEFINITIONS ---
 // =========================================================================
 const CURRENCY_NAME = 'Bits';
 const STARTING_BALANCE = 30;
@@ -42,25 +42,14 @@ const FLIP_MIN_BET = 5, FLIP_MAX_BET = 100;
 const SLOTS_MIN_BET = 10, SLOTS_MAX_BET = 1500, SLOTS_COOLDOWN_SECONDS = 5;
 
 const ITEMS = {
-    'iron_ore':   { name: "Iron Ore",       emoji: "🔩" },
-    'copper_ore': { name: "Copper Ore",     emoji: "🟤" },
-    'stone':      { name: "Stone",          emoji: "🪨" },
-    'wood':       { name: "Wood",           emoji: "🪵" },
-    'coal':       { name: "Coal",           emoji: "⚫" },
-    'basic_pickaxe': { 
-        name: "Basic Pickaxe",  
-        emoji: "⛏️", 
-        craftable: true, 
-        recipe: { 'stone': 5, 'wood': 2 } 
-    },
-    'sturdy_pickaxe': { 
-        name: "Sturdy Pickaxe", 
-        emoji: "⚒️", 
-        craftable: true, 
-        recipe: { 'iron_ore': 10, 'wood': 3, 'coal': 2 } 
-    },
+    'iron_ore': { name: "Iron Ore", emoji: "🔩" },
+    'copper_ore': { name: "Copper Ore", emoji: "🟤" },
+    'stone': { name: "Stone", emoji: "🪨" },
+    'wood': { name: "Wood", emoji: "🪵" },
+    'coal': { name: "Coal", emoji: "⚫" },
+    'basic_pickaxe': { name: "Basic Pickaxe", emoji: "⛏️", craftable: true, recipe: { 'stone': 5, 'wood': 2 } },
+    'sturdy_pickaxe': { name: "Sturdy Pickaxe", emoji: "⚒️", craftable: true, recipe: { 'iron_ore': 10, 'wood': 3, 'coal': 2 } },
 };
-
 const GATHER_TABLE = { 'iron_ore': { baseChance: 0.60, minQty: 1, maxQty: 3 }, 'copper_ore': { baseChance: 0.40, minQty: 1, maxQty: 2 }, 'stone': { baseChance: 0.70, minQty: 2, maxQty: 5 }, 'wood': { baseChance: 0.50, minQty: 1, maxQty: 4 }, 'coal': { baseChance: 0.30, minQty: 1, maxQty: 2 } };
 const SLOT_REELS = [ ['🍒', '🍋', '🍊', '🍉', '⭐', '🔔', '💎', '💰', '💔'], ['🍒', '🍋', '🍊', '🍉', '⭐', '🔔', '💎', '💰', '💔'], ['🍒', '🍋', '🍊', '🍉', '⭐', '🔔', '💎', '💰', '💔']];
 const SLOTS_PAYOUTS = { three_of_a_kind: 15, two_of_a_kind: 3.5, jackpot_symbol: '💎', jackpot_multiplier: 50 };
@@ -84,8 +73,8 @@ function handleInventory(account) { if (!account.inventory || Object.keys(accoun
 function handleRecipes() { let recipeList = ['📜 **Available Recipes:**']; for (const itemId in ITEMS) { if (ITEMS[itemId].craftable) { const recipeParts = Object.entries(ITEMS[itemId].recipe).map(([resId, qty]) => `${ITEMS[resId].emoji} ${qty}x ${ITEMS[resId].name}`); recipeList.push(`> ${ITEMS[itemId].emoji} **${ITEMS[itemId].name}**: Requires ${recipeParts.join(', ')}`); } } return recipeList.length > 1 ? recipeList.join('\n') : 'There are no craftable items yet.'; }
 async function handleCraft(account, itemName) { const itemToCraftId = getItemIdByName(itemName); if (!itemToCraftId || !ITEMS[itemToCraftId].craftable) return `"${itemName}" is not a valid, craftable item. Check \`/recipes\`.`; const recipe = ITEMS[itemToCraftId].recipe; for (const resId in recipe) { const requiredQty = recipe[resId]; const playerQty = account.inventory[resId] || 0; if (playerQty < requiredQty) return `You don't have enough resources! You need ${requiredQty - playerQty} more ${ITEMS[resId].name}.`; } for (const resId in recipe) await modifyInventory(account._id, resId, -recipe[resId]); await modifyInventory(account._id, itemToCraftId, 1); return `You successfully crafted 1x ${ITEMS[itemToCraftId].name}!`; }
 async function handleDaily(account) { const now = new Date(); const lastDaily = account.lastDaily ? new Date(account.lastDaily) : null; if (lastDaily && now.toDateString() === lastDaily.toDateString()) return { success: false, message: "You have already claimed your daily reward today. Come back tomorrow!" }; await updateAccount(account._id, { balance: account.balance + DAILY_REWARD, lastDaily: now }); return { success: true, message: `You claimed your daily ${DAILY_REWARD} ${CURRENCY_NAME}! Your new balance is ${account.balance + DAILY_REWARD}.` }; }
-async function handleFlip(account, amount, choice) { if (amount < FLIP_MIN_BET || amount > FLIP_MAX_BET) return { success: false, message: `Your bet must be between ${FLIP_MIN_BET} and ${FLIP_MAX_BET} ${CURRENCY_NAME}.` }; if (account.balance < amount) return { success: false, message: "You don't have enough bits for that bet." }; const result = Math.random() < 0.5 ? 'heads' : 'tails'; if (result === choice) { await updateAccount(account._id, { balance: account.balance + amount }); return { success: true, message: `It was ${result}! You win ${amount} ${CURRENCY_NAME}! New balance: ${account.balance + amount}.` }; } else { await updateAccount(account._id, { balance: account.balance - amount }); return { success: false, message: `It was ${result}. You lost ${amount} ${CURRENCY_NAME}. New balance: ${account.balance - amount}.` }; } }
-async function handleSlots(account, amount) { const now = Date.now(); const cooldown = SLOTS_COOLDOWN_SECONDS * 1000; if (account.lastSlots && (now - account.lastSlots) < cooldown) return { success: false, message: `Slow down! You can play slots again in ${formatDuration(Math.ceil((cooldown - (now - account.lastSlots))/1000))}.` }; if (amount < SLOTS_MIN_BET || amount > SLOTS_MAX_BET) return { success: false, message: `Your bet must be between ${SLOTS_MIN_BET} and ${SLOTS_MAX_BET} ${CURRENCY_NAME}.` }; if (account.balance < amount) return { success: false, message: "You don't have enough bits for that bet." }; await updateAccount(account._id, { lastSlots: now }); const s1 = SLOT_REELS[0][Math.floor(Math.random()*SLOT_REELS[0].length)], s2 = SLOT_REELS[1][Math.floor(Math.random()*SLOT_REELS[1].length)], s3 = SLOT_REELS[2][Math.floor(Math.random()*SLOT_REELS[2].length)]; const resultString = `[ ${s1} | ${s2} | ${s3} ]`; let winMultiplier = 0; let message = ''; if (s1 === s2 && s2 === s3) { winMultiplier = (s1 === SLOTS_PAYOUTS.jackpot_symbol) ? SLOTS_PAYOUTS.jackpot_multiplier : SLOTS_PAYOUTS.three_of_a_kind; message = (s1 === SLOTS_PAYOUTS.jackpot_symbol) ? "JACKPOT! 💎" : "Three of a kind!"; } else if (s1 === s2 || s2 === s3 || s1 === s3) { winMultiplier = SLOTS_PAYOUTS.two_of_a_kind; message = "Two of a kind!"; } if (winMultiplier > 0) { const winnings = Math.floor(amount * winMultiplier); await updateAccount(account._id, { balance: account.balance + winnings }); return { success: true, message: `${resultString} - ${message} You win ${winnings} ${CURRENCY_NAME}! New balance: ${account.balance + winnings}.` }; } else { await updateAccount(account._id, { balance: account.balance - amount }); return { success: false, message: `${resultString} - You lost ${amount} ${CURRENCY_NAME}. New balance: ${account.balance - amount}.` }; } }
+async function handleFlip(account, amount, choice) { if (isNaN(amount) || amount < FLIP_MIN_BET || amount > FLIP_MAX_BET) return { success: false, message: `Your bet must be between ${FLIP_MIN_BET} and ${FLIP_MAX_BET} ${CURRENCY_NAME}.` }; if (account.balance < amount) return { success: false, message: "You don't have enough bits for that bet." }; const result = Math.random() < 0.5 ? 'heads' : 'tails'; let newBalance; let replyMessage; if (result === choice) { newBalance = account.balance + amount; replyMessage = `It was ${result}! You win ${amount} ${CURRENCY_NAME}! New balance: ${newBalance}.`; } else { newBalance = account.balance - amount; replyMessage = `It was ${result}. You lost ${amount} ${CURRENCY_NAME}. New balance: ${newBalance}.`; } await updateAccount(account._id, { balance: newBalance }); return { success: true, message: replyMessage }; }
+async function handleSlots(account, amount) { const now = Date.now(); const cooldown = SLOTS_COOLDOWN_SECONDS * 1000; if (account.lastSlots && (now - account.lastSlots) < cooldown) { const remaining = cooldown - (now - account.lastSlots); return { success: false, message: `Slow down! You can play slots again in ${formatDuration(remaining / 1000)}.` }; } if (isNaN(amount) || amount < SLOTS_MIN_BET || amount > SLOTS_MAX_BET) return { success: false, message: `Your bet must be between ${SLOTS_MIN_BET} and ${SLOTS_MAX_BET} ${CURRENCY_NAME}.` }; if (account.balance < amount) return { success: false, message: "You don't have enough bits for that bet." }; await updateAccount(account._id, { lastSlots: now }); const s1 = SLOT_REELS[0][Math.floor(Math.random() * SLOT_REELS[0].length)]; const s2 = SLOT_REELS[1][Math.floor(Math.random() * SLOT_REELS[1].length)]; const s3 = SLOT_REELS[2][Math.floor(Math.random() * SLOT_REELS[2].length)]; const resultString = `[ ${s1} | ${s2} | ${s3} ]`; let winMultiplier = 0; let winMessage = ''; if (s1 === s2 && s2 === s3) { winMultiplier = (s1 === SLOTS_PAYOUTS.jackpot_symbol) ? SLOTS_PAYOUTS.jackpot_multiplier : SLOTS_PAYOUTS.three_of_a_kind; winMessage = (s1 === SLOTS_PAYOUTS.jackpot_symbol) ? "JACKPOT! 💎" : "Three of a kind!"; } else if (s1 === s2 || s2 === s3 || s1 === s3) { winMultiplier = SLOTS_PAYOUTS.two_of_a_kind; winMessage = "Two of a kind!"; } let finalMessage, newBalance; if (winMultiplier > 0) { const winnings = Math.floor(amount * winMultiplier); newBalance = account.balance + winnings; finalMessage = `${resultString} - ${winMessage} You win ${winnings} ${CURRENCY_NAME}! New balance: ${newBalance}.`; await updateAccount(account._id, { balance: newBalance }); } else { newBalance = account.balance - amount; finalMessage = `${resultString} - You lost ${amount} ${CURRENCY_NAME}. New balance: ${newBalance}.`; await updateAccount(account._id, { balance: newBalance }); } return { success: true, message: finalMessage }; }
 async function handleLeaderboard() { const topPlayers = await economyCollection.find().sort({ balance: -1 }).limit(10).toArray(); if (topPlayers.length === 0) return ["The leaderboard is empty!"]; let lbMessage = [`**🏆 Top 10 Richest Players 🏆**`]; topPlayers.forEach((player, index) => { lbMessage.push(`${index + 1}. **${player._id}** - ${player.balance} ${CURRENCY_NAME}`); }); return lbMessage; }
 
 // =========================================================================
@@ -180,8 +169,8 @@ app.post('/command', async (req, res) => {
         case 'bal': case 'balance': responseMessage = `${username}, your balance is: ${account.balance} ${CURRENCY_NAME}.`; break;
         case 'work': result = await handleWork(account); responseMessage = `${username}, ${result.message}`; break;
         case 'gather': result = await handleGather(account); responseMessage = `${username}, ${result.message}`; break;
-        case 'inv': case 'inventory': responseMessage = handleInventory(account).replace(/\>|\*|🎒/g, ''); break; // Remove Discord formatting for in-game
-        case 'recipes': responseMessage = handleRecipes().replace(/\>|\*|📜/g, ''); break;
+        case 'inv': case 'inventory': responseMessage = handleInventory(account).replace(/\>|\*|🎒|/g, ''); break; // Remove Discord formatting
+        case 'recipes': responseMessage = handleRecipes().replace(/\>|\*|📜|/g, ''); break;
         case 'craft': 
             if (args.length === 0) { responseMessage = "Usage: !craft <item name>"; }
             else {
