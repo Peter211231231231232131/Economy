@@ -4,7 +4,7 @@
   "description": "Discord and Web server for the Drednot Economy Bot, hosted on Render.",
   "main": "index.js",
   "scripts": {
-    "start": "node deploy-commands.js && node index.js"
+    "start": "node index.js"
   },
   "dependencies": {
     "discord.js": "^14.15.3",
