@@ -6,7 +6,6 @@ const clientId = process.env.DISCORD_CLIENT_ID;
 if (!token || !clientId) throw new Error("Missing secrets!");
 
 const commands = [
-    // Existing Economy Commands
     { name: 'link', description: 'Links your Discord account to your Drednot.io account.', options: [{ name: 'drednot_name', type: 3, description: 'Your exact in-game name', required: true }] },
     { name: 'balance', description: 'Check your in-game balance.' },
     { name: 'work', description: 'Work to earn bits.' },
@@ -25,38 +24,8 @@ const commands = [
     { name: 'timers', description: 'Check your personal cooldowns.' },
     { name: 'smelt', description: 'Smelt ores into ingots.', options: [ { name: 'ore_name', type: 3, description: 'The type of ore to smelt (e.g., Iron Ore)', required: true }, { name: 'quantity', type: 4, description: 'How many ores to smelt', required: true }] },
     { name: 'pay', description: 'Give Bits to another player.', options: [ { name: 'user', type: 6, description: 'The Discord user to pay', required: true }, { name: 'amount', type: 4, description: 'The amount of Bits to give', required: true }] },
-
-    // Lootbox Commands
-    { 
-        name: 'crateshop', 
-        description: "View The Collector's special crates for sale." 
-    },
-    { 
-        name: 'crateopen', 
-        description: 'Buy and open one or more crates from The Collector.', 
-        options: [
-            { 
-                name: 'crate_name', 
-                type: 3, // String
-                description: "The name of the crate you want to open.", 
-                required: true,
-                // --- THIS IS THE UPDATED SECTION ---
-                // The choices now reflect the new, consistent crate names.
-                choices: [
-                    { name: "Miner's Crate", value: "Miner's Crate" },
-                    { name: "Builder's Crate", value: "Builder's Crate" },
-                    { name: "Gambler's Crate", value: "Gambler's Crate" },
-                    { name: "Crystal Crate", value: "Crystal Crate" },
-                ]
-            },
-            { 
-                name: 'amount', 
-                type: 4, // Integer
-                description: 'The number of crates you want to open.', 
-                required: true 
-            }
-        ] 
-    },
+    { name: 'crateshop', description: "View The Collector's special crates for sale." },
+    { name: 'crateopen', description: 'Buy and open one or more crates from The Collector.', options: [ { name: 'crate_name', type: 3, description: "The name of the crate you want to open.", required: true, choices: [ { name: "Miner's Crate", value: "Miner's Crate" }, { name: "Builder's Crate", value: "Builder's Crate" }, { name: "Gambler's Crate", value: "Gambler's Crate" }, { name: "Crystal Crate", value: "Crystal Crate" }, ] }, { name: 'amount', type: 4, description: 'The number of crates you want to open.', required: true } ] },
 ];
 
 const rest = new REST({ version: '10' }).setToken(token);
