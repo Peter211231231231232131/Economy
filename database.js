@@ -1,3 +1,5 @@
+// database.js
+
 const { MongoClient } = require('mongodb');
 
 let economyCollection, verificationsCollection, marketCollection, lootboxCollection;
@@ -12,7 +14,13 @@ async function connectToDatabase(uri) {
         verificationsCollection = db.collection("verifications");
         marketCollection = db.collection("market_listings");
         lootboxCollection = db.collection("lootbox_listings");
-        console.log("Database collections are set up.");
+        
+        // Create indexes for better performance
+        await economyCollection.createIndex({ discordId: 1 });
+        await marketCollection.createIndex({ listingId: 1 });
+        await marketCollection.createIndex({ sellerId: 1 });
+
+        console.log("Database collections and indexes are set up.");
         return true;
     } catch (error) {
         console.error("DB connection failed", error);
