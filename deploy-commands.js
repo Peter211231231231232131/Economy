@@ -1,4 +1,4 @@
-// deploy-command.js
+// deploy-command.js (Updated)
 
 const { REST, Routes } = require('discord.js');
 require('dotenv').config();
@@ -9,6 +9,9 @@ if (!token || !clientId) throw new Error("Missing secrets!");
 
 const commands = [
     { name: 'link', description: 'Links your Discord account to your Drednot.io account.', options: [{ name: 'drednot_name', type: 3, description: 'Your exact in-game name', required: true }] },
+    // NEW: The /name command for unlinked users
+    { name: 'name', description: 'Set a custom display name for the leaderboard (unlinked accounts only).', options: [{ name: 'new_name', type: 3, description: 'Your desired display name (3-16 characters)', required: true }] },
+    
     { name: 'balance', description: 'Check your in-game balance.' },
     { name: 'work', description: 'Work to earn bits.' },
     { name: 'gather', description: 'Gather for random resources.' },
@@ -27,11 +30,7 @@ const commands = [
     { name: 'smelt', description: 'Smelt ores into ingots.', options: [ { name: 'ore_name', type: 3, description: 'The type of ore to smelt (e.g., Iron Ore)', required: true }, { name: 'quantity', type: 4, description: 'How many ores to smelt', required: true }] },
     { name: 'pay', description: 'Give Bits to another player.', options: [ { name: 'user', type: 6, description: 'The Discord user to pay', required: true }, { name: 'amount', type: 4, 'description': 'The amount of Bits to give', required: true }] },
     { name: 'iteminfo', description: 'Get information about a specific item.', options: [{ name: 'item_name', type: 3, description: 'The name of the item to inspect', required: true }] },
-    
-    // New command for eating food
     { name: 'eat', description: 'Consume food for a temporary buff.', options: [{ name: 'food_name', type: 3, description: 'The name of the food to eat from your inventory', required: true }] },
-
-    // Crate Shop Commands
     { 
         name: 'crateshop', 
         description: "View The Collector's special crates for sale (!cs)." 
