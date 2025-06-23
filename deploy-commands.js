@@ -1,3 +1,5 @@
+// deploy-command.js
+
 const { REST, Routes } = require('discord.js');
 require('dotenv').config();
 
@@ -25,13 +27,16 @@ const commands = [
     { name: 'smelt', description: 'Smelt ores into ingots.', options: [ { name: 'ore_name', type: 3, description: 'The type of ore to smelt (e.g., Iron Ore)', required: true }, { name: 'quantity', type: 4, description: 'How many ores to smelt', required: true }] },
     { name: 'pay', description: 'Give Bits to another player.', options: [ { name: 'user', type: 6, description: 'The Discord user to pay', required: true }, { name: 'amount', type: 4, description: 'The amount of Bits to give', required: true }] },
     
+    // New command
+    { name: 'iteminfo', description: 'Get information about a specific item.', options: [{ name: 'item_name', type: 3, description: 'The name of the item to inspect', required: true }] },
+    
     // Crate Shop Commands
     { 
         name: 'crateshop', 
         description: "View The Collector's special crates for sale (!cs)." 
     },
     { 
-        name: 'crateoshopbuy', // This is the / command for !cb and !co
+        name: 'crateoshopbuy', 
         description: 'Buy and open one or more crates from The Collector (!csb).', 
         options: [
             { 
