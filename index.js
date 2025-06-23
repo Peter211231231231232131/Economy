@@ -162,7 +162,40 @@ async function handleGather(account) {
     return { success: true, message: `You gathered: ${gatheredItems.join(', ')}` };
 }
 
-async function handleLeaderboard() { const allPlayers = await economyCollection.find({}).sort({ balance: -1 }).toArray(); const linkedDiscordIds = new Set(allPlayers.filter(p => p.discordId && p.drednotName).map(p => p.discordId)); const topPlayers = allPlayers.filter(player => { if (player.drednotName) { return true; } if (player.discordId && !linkedDiscordIds.has(player.discordId)) { return true; } return false; }).slice(0, 50); if (topPlayers.length === 0) { return { success: false, lines: ["The leaderboard is empty!"] }; } const lines = topPlayers.map((player, index) => { const name = player.drednotName || player.displayName || `User ${player._id}`; return `${index + 1}. **${name}** - ${player.balance} ${CURRENCY_NAME}`; }); return { success: true, lines: lines }; }
+// MODIFIED: The simplest inclusive leaderboard that is still "zombie-proof"
+async function handleLeaderboard() {
+    // Get all player documents, sorted by balance
+    const allPlayers = await economyCollection.find({}).sort({ balance: -1 }).toArray();
+
+    // Identify the discord IDs of all fully linked accounts
+    const linkedDiscordIds = new Set(
+        allPlayers.filter(p => p.discordId && p.drednotName).map(p => p.discordId)
+    );
+
+    // Filter out the "zombie" accounts
+    const topPlayers = allPlayers.filter(player => {
+        // If the player is not fully linked (i.e., is a temporary discord account)
+        if (!player.drednotName && player.discordId) {
+            // Only keep them if their discordId does NOT belong to an already linked account
+            return !linkedDiscordIds.has(player.discordId);
+        }
+        // Keep all other players (fully linked ones and drednot-only ones)
+        return true;
+    }).slice(0, 50); // Get the top 50 from the clean list
+
+    if (topPlayers.length === 0) {
+        return { success: false, lines: ["The leaderboard is empty!"] };
+    }
+
+    // Format the names for display
+    const lines = topPlayers.map((player, index) => {
+        const name = player.drednotName || player.displayName || `User ${player._id}`;
+        return `${index + 1}. **${name}** - ${player.balance} ${CURRENCY_NAME}`;
+    });
+
+    return { success: true, lines: lines };
+}
+
 async function handleWork(account) { const now = Date.now(); let currentCooldown = WORK_COOLDOWN_MINUTES * 60 * 1000; let activeBuffs = (account.activeBuffs || []).filter(buff => buff.expiresAt > now); let bonusFlat = 0; let bonusPercent = 0.0; let spicyPepperBuff = null; let cooldownReduction = 0; for (const itemId in account.inventory) { const itemDef = ITEMS[itemId]; if (itemDef?.type === 'tool' && itemDef.effects) { const qty = account.inventory[itemId]; if (itemDef.effects.work_bonus_flat) bonusFlat += itemDef.effects.work_bonus_flat * qty; if (itemDef.effects.work_bonus_percent) bonusPercent += itemDef.effects.work_bonus_percent * qty; } } for (const buff of activeBuffs) { const itemDef = ITEMS[buff.itemId]; if (itemDef?.buff?.effects) { if (itemDef.buff.effects.work_bonus_percent) bonusPercent += itemDef.buff.effects.work_bonus_percent; if (itemDef.buff.effects.work_cooldown_reduction_ms) cooldownReduction += itemDef.buff.effects.work_cooldown_reduction_ms; if (itemDef.buff.effects.work_double_or_nothing) spicyPepperBuff = itemDef.buff.effects.work_double_or_nothing; } } currentCooldown -= cooldownReduction; if (account.lastWork && (now - account.lastWork) < currentCooldown) { return { success: false, message: `You are on cooldown. Wait ${formatDuration((currentCooldown - (now - account.lastWork)) / 1000)}.` }; } let baseEarnings = Math.floor(Math.random() * (WORK_REWARD_MAX - WORK_REWARD_MIN + 1)) + WORK_REWARD_MIN; const bonusAmount = Math.floor(baseEarnings * bonusPercent) + bonusFlat; let totalEarnings = baseEarnings + bonusAmount; let surgeMessage = ''; if (spicyPepperBuff) { if (Math.random() < 0.5) { totalEarnings = 0; surgeMessage = ` The Spicy Pepper backfired! You earned nothing.` } else { totalEarnings *= 2; surgeMessage = ` The Spicy Pepper kicked in! Your earnings were doubled!` } } await updateAccount(account._id, { balance: Math.round(account.balance + totalEarnings), lastWork: now }); let bonusText = bonusAmount !== 0 ? ` (${bonusAmount > 0 ? '+' : ''}${bonusAmount} bonus)` : ''; let replyMessage = `You earned ${Math.round(totalEarnings)} ${CURRENCY_NAME}${bonusText}!${surgeMessage}`; return { success: true, message: replyMessage }; }
 function handleInventory(account, filter = null) { if (!account.inventory || Object.keys(account.inventory).length === 0) return 'Your inventory is empty.'; let invList = []; const filterLower = filter ? filter.toLowerCase() : null; for (const itemId in account.inventory) { if (account.inventory[itemId] > 0) { const item = ITEMS[itemId]; if (!item) continue; if (!filterLower || item.name.toLowerCase().includes(filterLower)) invList.push(`> ${item.emoji || '❓'} ${account.inventory[itemId]}x ${item.name}`); } } if (invList.length === 0) return `You have no items matching "${filter}".`; const header = filter ? `🎒 **Inventory (Filtered by: ${filter})**` : '🎒 **Your Inventory:**'; return [header, ...invList].join('\n'); }
 function handleRecipes() { let recipeList = ['📜 **Available Recipes:**']; for (const itemId in ITEMS) { if (ITEMS[itemId].craftable) { const recipeParts = Object.entries(ITEMS[itemId].recipe).map(([resId, qty]) => `${ITEMS[resId].emoji} ${qty}x ${ITEMS[resId].name}`); recipeList.push(`> ${ITEMS[itemId].emoji} **${ITEMS[itemId].name}**: Requires ${recipeParts.join(', ')}`); } } return recipeList.length > 1 ? recipeList.join('\n') : 'There are no craftable items yet.'; }
