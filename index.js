@@ -1,3 +1,5 @@
+// index.js
+
 // --- Library Imports ---
 const { Client, GatewayIntentBits, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const express = require('express');
@@ -89,6 +91,67 @@ async function handleMarket(filter = null) { let query = {}; const filterLower =
 function openLootbox(lootboxId) { const lootbox = LOOTBOXES[lootboxId]; if (!lootbox) return null; const totalWeight = lootbox.contents.reduce((sum, item) => sum + item.weight, 0); let random = Math.random() * totalWeight; for (const item of lootbox.contents) { if (random < item.weight) { const amount = Math.floor(Math.random() * (item.max - item.min + 1)) + item.min; return { type: item.type, id: item.id, amount: amount }; } random -= item.weight; } return null; }
 async function handleCrateShop() { const listings = await lootboxCollection.find().sort({ lootboxId: 1 }).toArray(); if (listings.length === 0) { return { success: false, lines: [`The Collector has no crates for sale right now.`] }; } const formattedLines = listings.filter(l => LOOTBOXES[l.lootboxId]).map(l => { const crate = LOOTBOXES[l.lootboxId]; return `${crate.emoji} **${l.quantity}x** ${crate.name} @ **${crate.price}** ${CURRENCY_NAME} ea.`; }); if (formattedLines.length === 0) { return { success: false, lines: [`The Collector's stock is being updated. Please check back in a moment.`] }; } return { success: true, lines: formattedLines }; }
 
+// --- NEW FUNCTION ---
+function handleItemInfo(itemName) {
+    const itemId = getItemIdByName(itemName);
+    if (!itemId) {
+        return `Could not find an item named "${itemName}".`;
+    }
+
+    const itemDef = ITEMS[itemId];
+    const header = `${itemDef.emoji} **${itemDef.name}**\n--------------------`;
+    let infoLines = [];
+
+    if (itemDef.type) {
+        const typeFormatted = itemDef.type.charAt(0).toUpperCase() + itemDef.type.slice(1);
+        infoLines.push(`> **Type:** ${typeFormatted}`);
+    }
+
+    // Special descriptions for items with unique hardcoded logic
+    switch (itemId) {
+        case 'gathering_basket':
+            infoLines.push(`> **Effect:** Allows you to find more item types and quantities when you /gather.`);
+            break;
+        case 'smelter':
+            infoLines.push(`> **Effect:** Enables the /smelt command. More smelters reduce smelting time.`);
+            break;
+        case 'coal':
+            infoLines.push(`> **Use:** Required fuel for the /smelt command.`);
+            break;
+    }
+
+    // Generic effects parser for tools like pickaxes
+    if (itemDef.effects) {
+        for (const effect in itemDef.effects) {
+            const value = itemDef.effects[effect];
+            let effectText = '> **Effect:** ';
+            if (effect === 'work_bonus_flat') {
+                effectText += `Increases Bits from /work by a flat bonus of +${value}.`;
+            } else if (effect === 'work_bonus_percent') {
+                effectText += `Increases Bits from /work by a bonus of ${value * 100}%.`;
+            }
+            infoLines.push(effectText);
+        }
+    }
+    
+    // Crafting information
+    if (itemDef.craftable) {
+        const recipeParts = Object.entries(itemDef.recipe).map(([resId, qty]) => {
+            const resource = ITEMS[resId];
+            return `${resource.emoji} ${qty}x ${resource.name}`;
+        });
+        infoLines.push(`> **Craftable:** Yes`);
+        infoLines.push(`> **Recipe:** ${recipeParts.join(', ')}`);
+    }
+
+    // Default message for basic resources if no other info was added
+    if (infoLines.length === 0) {
+        infoLines.push('> **Use:** A basic resource used in crafting recipes.');
+    }
+
+    return [header, ...infoLines].join('\n');
+}
+
 // --- BACKGROUND & NPC LOGIC ---
 async function processVendorTicks() { console.log("Processing regular vendor tick..."); const vendor = VENDORS[Math.floor(Math.random() * VENDORS.length)]; const currentListingsCount = await marketCollection.countDocuments({ sellerId: vendor.sellerId }); if (currentListingsCount >= 3) { console.log(`${vendor.name} has enough items listed. Skipping.`); return; } if (Math.random() < vendor.chance) { const itemToSell = vendor.stock[Math.floor(Math.random() * vendor.stock.length)]; try { const newListingId = await findNextAvailableListingId(marketCollection); await marketCollection.insertOne({ listingId: newListingId, sellerId: vendor.sellerId, sellerName: vendor.name, itemId: itemToSell.itemId, quantity: itemToSell.quantity, price: itemToSell.price }); console.log(`${vendor.name} listed ${itemToSell.quantity}x ${ITEMS[itemToSell.itemId].name}!`); } catch (error) { if (error.code === 11000) { console.warn(`[Vendor Tick] Race condition for ${vendor.name}. Retrying next tick.`); } else { console.error(`[Vendor Tick] Error for ${vendor.name}:`, error); } } } }
 async function processLootboxVendorTick() { console.log("Processing lootbox vendor tick..."); const currentListingsCount = await lootboxCollection.countDocuments({}); if (currentListingsCount >= MAX_LOOTBOX_LISTINGS) { console.log("The Collector has enough listings. Skipping."); return; } const lootboxTypes = Object.keys(LOOTBOXES); const crateToSellId = lootboxTypes[Math.floor(Math.random() * lootboxTypes.length)]; const alreadySelling = await lootboxCollection.findOne({ lootboxId: crateToSellId }); if (alreadySelling) { console.log(`The Collector is already selling ${crateToSellId}. Skipping.`); return; } const crateToSell = LOOTBOXES[crateToSellId]; const quantity = Math.floor(Math.random() * 5) + 1; await lootboxCollection.insertOne({ sellerId: LOOTBOX_VENDOR_ID, lootboxId: crateToSellId, quantity: quantity, price: crateToSell.price }); console.log(`The Collector listed ${quantity}x ${crateToSell.name}!`); }
@@ -128,6 +191,15 @@ async function handleSlashCommand(interaction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     if (commandName === 'link') { const existingLink = await getAccount(user.id); if (existingLink) return interaction.editReply({ content: `Your account is already linked to **${existingLink._id}**.` }); const drednotNameToLink = options.getString('drednot_name'); const targetAccount = await getAccount(drednotNameToLink); if (targetAccount && targetAccount.discordId) return interaction.editReply({ content: `**${drednotNameToLink}** is already linked.` }); const verificationCode = `${Math.floor(1000 + Math.random() * 9000)}`; await verificationsCollection.insertOne({ _id: verificationCode, discordId: user.id, drednotName: drednotNameToLink, timestamp: Date.now() }); await interaction.editReply({ content: `**Verification Started!**\nIn Drednot, type: \`!verify ${verificationCode}\`\nThis code expires in 5 minutes.` }); return; }
     if (['market', 'leaderboard', 'recipes', 'crateshop'].includes(commandName)) { let result, title, type; if (commandName === 'market') { const filter = options.getString('filter'); result = await handleMarket(filter); title = filter ? `Market (Filter: ${filter})` : "Market"; type = 'market'; } if (commandName === 'leaderboard') { result = await handleLeaderboard(); title = "Leaderboard"; type = 'leaderboard'; } if (commandName === 'recipes') { const recipeLines = handleRecipes().split('\n'); title = recipeLines.shift(); result = { success: true, lines: recipeLines }; type = 'recipes'; } if (commandName === 'crateshop') { result = await handleCrateShop(); title = "The Collector's Crates"; type = 'crateshop'; } if (!result.success) return interaction.editReply({ content: result.lines[0], components: [] }); const { discord } = getPaginatedResponse(user.id, type, result.lines, title, 0); await interaction.editReply(discord); return; }
+    
+    // --- EDITED SECTION ---
+    if (commandName === 'iteminfo') {
+        const itemName = options.getString('item_name');
+        const infoMessage = handleItemInfo(itemName);
+        return interaction.editReply({ content: infoMessage });
+    }
+    // --- END EDITED SECTION ---
+    
     const account = await getAccount(user.id);
     if (!account) return interaction.editReply({ content: 'Your account is not linked. Use `/link` first.' });
     let result, amount, choice, itemName, quantity, price, listingId;
@@ -149,24 +221,15 @@ async function handleSlashCommand(interaction) {
             const listingToBuy = await marketCollection.findOne({ listingId: listingId });
             if (!listingToBuy) return interaction.editReply({ content: 'Invalid listing ID.' });
             if (listingToBuy.sellerId === account._id) return interaction.editReply({ content: "You can't buy your own listing." });
-            
-            // --- FIX START ---
             const totalCost = Math.round(listingToBuy.quantity * listingToBuy.price);
-            // --- FIX END ---
-            
             if (account.balance < totalCost) return interaction.editReply({ content: `You can't afford this. It costs ${totalCost} ${CURRENCY_NAME}.` });
-            
             await updateAccount(account._id, { balance: account.balance - totalCost });
             await modifyInventory(account._id, listingToBuy.itemId, listingToBuy.quantity);
             const sellerAccount = await getAccount(listingToBuy.sellerId);
-            
             if (sellerAccount) {
-                // --- FIX START ---
                 const earnings = Math.round(totalCost * (1 - MARKET_TAX_RATE));
-                // --- FIX END ---
                 await economyCollection.updateOne({ _id: sellerAccount._id }, { $inc: { balance: earnings } });
             }
-            
             await marketCollection.deleteOne({ _id: listingToBuy._id });
             await interaction.editReply({ content: `You bought ${listingToBuy.quantity}x ${ITEMS[listingToBuy.itemId].name}!` });
             break;
@@ -222,6 +285,21 @@ app.post('/command', async (req, res) => {
     let result, lines, title;
     const cleanText = (text) => Array.isArray(text) ? text.map(t => t.replace(/\*\*|`|>/g, '').replace(/<a?:.+?:\d+>/g, '').replace(/<:[a-zA-Z0-9_]+:[0-9]+>/g, '')) : String(text).replace(/\*\*|`|>/g, '').replace(/<a?:.+?:\d+>/g, '').replace(/<:[a-zA-Z0-9_]+:[0-9]+>/g, '');
     switch (command) {
+        // ... (other cases)
+        
+        // --- ADD THIS CASE ---
+        case 'iif':
+        case 'iteminfo':
+            if (args.length === 0) {
+                responseMessage = "Usage: !iteminfo <item name>";
+                break;
+            }
+            const infoItemName = args.join(' ');
+            const infoMessage = handleItemInfo(infoItemName);
+            responseMessage = cleanText(infoMessage).split('\n'); // Split to send as multiline message
+            break;
+        // --- END ADDED CASE ---
+
         case 'm': case 'market': const marketFilter = args.length > 0 ? args.join(' ') : null; result = await handleMarket(marketFilter); if (!result.success) { responseMessage = result.lines[0]; break; } title = marketFilter ? `Market (Filter: ${marketFilter})` : "Market"; const marketPage = getPaginatedResponse(identifier, 'market', result.lines, title, 0); responseMessage = marketPage.game.map(line => cleanText(line)); break;
         case 'lb': case 'leaderboard': result = await handleLeaderboard(); if (!result.success) { responseMessage = result.lines[0]; break; } title = "Leaderboard"; const lbPage = getPaginatedResponse(identifier, 'leaderboard', result.lines, title, 0); responseMessage = lbPage.game.map(line => cleanText(line)); break;
         case 'recipes': lines = handleRecipes().split('\n'); title = lines.shift(); result = getPaginatedResponse(identifier, 'recipes', lines, title, 0); responseMessage = result.game.map(line => cleanText(line)); break;
@@ -245,9 +323,7 @@ app.post('/command', async (req, res) => {
             if (!listingToBuy) { responseMessage = 'Invalid listing ID.'; break; }
             if (listingToBuy.sellerId === account._id) { responseMessage = "You can't buy your own listing."; break; }
             
-            // --- FIX START ---
             const totalCost = Math.round(listingToBuy.quantity * listingToBuy.price);
-            // --- FIX END ---
             
             if (account.balance < totalCost) { responseMessage = "You can't afford this."; } else {
                 await updateAccount(account._id, { balance: account.balance - totalCost });
@@ -255,10 +331,8 @@ app.post('/command', async (req, res) => {
                 const sellerAccount = await getAccount(listingToBuy.sellerId);
                 
                 if (sellerAccount) {
-                    // --- FIX START ---
                     const earnings = Math.round(totalCost * (1 - MARKET_TAX_RATE));
                     await updateAccount(sellerAccount._id, { balance: sellerAccount.balance + earnings });
-                    // --- FIX END ---
                 }
                 
                 await marketCollection.deleteOne({ _id: listingToBuy._id });
