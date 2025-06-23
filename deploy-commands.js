@@ -25,11 +25,12 @@ const commands = [
     { name: 'leaderboard', description: 'Shows the top players by balance.' },
     { name: 'timers', description: 'Check your personal cooldowns.' },
     { name: 'smelt', description: 'Smelt ores into ingots.', options: [ { name: 'ore_name', type: 3, description: 'The type of ore to smelt (e.g., Iron Ore)', required: true }, { name: 'quantity', type: 4, description: 'How many ores to smelt', required: true }] },
-    { name: 'pay', description: 'Give Bits to another player.', options: [ { name: 'user', type: 6, description: 'The Discord user to pay', required: true }, { name: 'amount', type: 4, description: 'The amount of Bits to give', required: true }] },
-    
-    // New command
+    { name: 'pay', description: 'Give Bits to another player.', options: [ { name: 'user', type: 6, description: 'The Discord user to pay', required: true }, { name: 'amount', type: 4, 'description': 'The amount of Bits to give', required: true }] },
     { name: 'iteminfo', description: 'Get information about a specific item.', options: [{ name: 'item_name', type: 3, description: 'The name of the item to inspect', required: true }] },
     
+    // New command for eating food
+    { name: 'eat', description: 'Consume food for a temporary buff.', options: [{ name: 'food_name', type: 3, description: 'The name of the food to eat from your inventory', required: true }] },
+
     // Crate Shop Commands
     { 
         name: 'crateshop', 
