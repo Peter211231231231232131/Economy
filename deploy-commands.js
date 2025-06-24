@@ -8,10 +8,9 @@ const clientId = process.env.DISCORD_CLIENT_ID;
 if (!token || !clientId) throw new Error("Missing secrets!");
 
 const commands = [
+    // --- Core Commands (Unchanged) ---
     { name: 'link', description: 'Links your Discord account to your Drednot.io account.', options: [{ name: 'drednot_name', type: 3, description: 'Your exact in-game name', required: true }] },
-    // NEW: The /name command for unlinked users
     { name: 'name', description: 'Set a custom display name for the leaderboard (unlinked accounts only).', options: [{ name: 'new_name', type: 3, description: 'Your desired display name (3-16 characters)', required: true }] },
-    
     { name: 'balance', description: 'Check your in-game balance.' },
     { name: 'work', description: 'Work to earn bits.' },
     { name: 'gather', description: 'Gather for random resources.' },
@@ -29,12 +28,31 @@ const commands = [
     { name: 'timers', description: 'Check your personal cooldowns.' },
     { name: 'smelt', description: 'Smelt ores into ingots.', options: [ { name: 'ore_name', type: 3, description: 'The type of ore to smelt (e.g., Iron Ore)', required: true }, { name: 'quantity', type: 4, description: 'How many ores to smelt', required: true }] },
     { name: 'pay', description: 'Give Bits to another player.', options: [ { name: 'user', type: 6, description: 'The Discord user to pay', required: true }, { name: 'amount', type: 4, 'description': 'The amount of Bits to give', required: true }] },
-    { name: 'iteminfo', description: 'Get information about a specific item.', options: [{ name: 'item_name', type: 3, description: 'The name of the item to inspect', required: true }] },
     { name: 'eat', description: 'Consume food for a temporary buff.', options: [{ name: 'food_name', type: 3, description: 'The name of the food to eat from your inventory', required: true }] },
-    { 
-        name: 'crateshop', 
-        description: "View The Collector's special crates for sale (!cs)." 
+
+    // --- Renamed /iteminfo to /info ---
+    { name: 'info', description: 'Get information about a specific item or trait.', options: [{ name: 'name', type: 3, description: 'The name of the item or trait to inspect', required: true }] },
+    
+    // --- New Trait Commands ---
+    {
+        name: 'traits',
+        description: 'View or reroll your traits.',
+        options: [
+            {
+                name: 'view',
+                description: 'View your currently equipped traits.',
+                type: 1 // SUB_COMMAND
+            },
+            {
+                name: 'reroll',
+                description: 'Use a Trait Reforger to get two new random traits.',
+                type: 1 // SUB_COMMAND
+            }
+        ]
     },
+
+    // --- Crate Shop Commands (Unchanged) ---
+    { name: 'crateshop', description: "View The Collector's special crates for sale (!cs)." },
     { 
         name: 'crateoshopbuy', 
         description: 'Buy and open one or more crates from The Collector (!csb).', 
@@ -49,6 +67,7 @@ const commands = [
                     { name: "Builder's Crate", value: "Builder's Crate" },
                     { name: "Gambler's Crate", value: "Gambler's Crate" },
                     { name: "Crystal Crate", value: "Crystal Crate" },
+                    { name: "Enigmatic Crate", value: "Enigmatic Crate" }, // NEW
                 ]
             },
             { 
