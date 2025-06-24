@@ -1,4 +1,4 @@
-// index.js (Full Updated Script)
+// index.js (Full Updated Script - Corrected Function Order)
 
 // --- Library Imports ---
 const { Client, GatewayIntentBits, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
