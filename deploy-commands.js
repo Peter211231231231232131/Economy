@@ -56,7 +56,6 @@ const commands = [
                     { name: "Miner's Crate", value: "Miner's Crate" },
                     { name: "Builder's Crate", value: "Builder's Crate" },
                     { name: "Gambler's Crate", value: "Gambler's Crate" },
-                    { name: "Crystal Crate", value: "Crystal Crate" },
                 ]
             },
             { 
