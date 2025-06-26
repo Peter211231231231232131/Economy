@@ -290,7 +290,7 @@ app.post('/command', async (req, res) => {
             await economyCollection.updateOne({ _id: conflictingDiscordUser._id }, { $set: { displayName: null, wasBumped: true } });
         }
         account = await createNewAccount(username, 'drednot');
-        const welcomeMessage = [`Welcome! Your new economy account "${username}" has been created with ${STARTING_BALANCE} Bits and two random traits.`, `Use !traits to see what you got, and !info <trait name> to learn more.`, `Join the Discord to link your account and get updates! https://discord.gg/SvZe9ytB`];
+        const welcomeMessage = [`Welcome! Your new economy account "${username}" has been created with ${STARTING_BALANCE} Bits and two random traits.`, `Join dc if u want a better experience`, `https://discord.gg/su7JQrdzzw`];
         return res.json({ reply: welcomeMessage });
     } else {
         account = await selfHealAccount(account);
