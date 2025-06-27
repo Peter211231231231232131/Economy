@@ -93,7 +93,7 @@ const LOOTBOXES = {
     'builders_crate': { name: "Builder's Crate", emoji: '🧱', price: 300, contents: [ { type: 'item', id: 'wood', min: 20, max: 50, weight: 50 }, { type: 'item', id: 'stone', min: 20, max: 50, weight: 45 }, { type: 'item', id: 'smelter', min: 1, max: 1, weight: 5 } ] },
     'gamblers_crate': { name: "Gambler's Crate", emoji: '💰', price: 400, contents: [ { type: 'bits', id: null, min: 1, max: 200, weight: 60 }, { type: 'bits', id: null, min: 201, max: 600, weight: 35 }, { type: 'bits', id: null, min: 601, max: 1500, weight: 5 } ] },
     'crystal_crate': { name: "Crystal Crate", emoji: '💎', price: 500, contents: [ { type: 'item', id: 'raw_crystal', min: 1, max: 3, weight: 80 }, { type: 'item', id: 'raw_crystal', min: 4, max: 8, weight: 18 }, { type: 'item', id: 'crystal_pickaxe', min: 1, max: 1, weight: 2 } ] },
-    'reforgers_cache': { name: "Reforger's Cache", emoji: '✨', price: 100, contents: [ { type: 'item', id: 'trait_reforger', min: 2, max: 15, weight: 100 } ] }
+    'dna_crate': { name: "DNA Crate", emoji: '🧬', price: 100, contents: [ { type: 'item', id: 'trait_reforger', min: 2, max: 15, weight: 100 } ] }
 };
 
 // =========================================================================
