@@ -52,7 +52,7 @@ async function connectToDatabase() {
 // =========================================================================
 const CURRENCY_NAME = 'Bits';
 const STARTING_BALANCE = 30;
-
+const DISCSORD_INVITE_LINK = 'https://discord.gg/SvZe9ytB'
 // --- REWARD & STREAK CONSTANTS ---
 const DAILY_REWARD_BASE = 1500;
 const DAILY_STREAK_BONUS = 250;
@@ -1081,7 +1081,7 @@ app.post('/command', async (req, res) => {
                 await economyCollection.updateOne({ _id: conflictingDiscordUser._id }, { $set: { displayName: null, wasBumped: true } });
             }
             account = await createNewAccount(username, 'drednot');
-            const welcomeMessage = [`Welcome! Your new economy account "${username}" has been created with ${STARTING_BALANCE} Bits and two random traits.`, `Join the Discord for the full experience:`, `https://discord.gg/your-invite-code`];
+            const welcomeMessage = [`Welcome! Your new economy account "${username}" has been created with ${STARTING_BALANCE} Bits and two random traits.`, `Join the Discord for the full experience:`, `${DISCORD_INVITE_LINK}`];
             return res.json({ reply: welcomeMessage });
         } else {
             account = await selfHealAccount(account);
