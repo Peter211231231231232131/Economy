@@ -132,14 +132,22 @@ async function handleWork(account) {
         totalEarnings *= currentGlobalEvent.effect.multiplier;
         eventMessage = ` **(x${currentGlobalEvent.effect.multiplier} ${currentGlobalEvent.name}!)**`;
     }
+    
+    // --- EARNINGS SANITIZATION FIX ---
+    if (!isFinite(totalEarnings) || isNaN(totalEarnings)) {
+        console.error(`[CRITICAL] Invalid earnings calculated for account ${account._id}. Value: ${totalEarnings}. Aborting balance update.`);
+        return { success: false, message: "An error occurred while calculating your earnings. Your balance has not been changed. Please contact an admin." };
+    }
+    
     let finalMessage = `You earned ${Math.round(totalEarnings)} ${CURRENCY_NAME}${bonusText}!${eventMessage}`;
-    let updates = { $set: { balance: account.balance + totalEarnings, lastWork: now, 'zeal.stacks': zealStacks, 'zeal.lastAction': now }, $pull: { activeBuffs: { itemId: 'the_addict_rush' } } };
+    let updates = { $inc: { balance: totalEarnings }, $set: { lastWork: now, 'zeal.stacks': zealStacks, 'zeal.lastAction': now }, $pull: { activeBuffs: { itemId: 'the_addict_rush' } } };
     let scavengerLoot = '';
     if (scavengerChance > 0 && secureRandomFloat() * 100 < scavengerChance) {
         const loot = ['wood', 'stone'][Math.floor(Math.random() * 2)];
         const qty = Math.floor(Math.random() * 3) + 1;
         scavengerLoot = ` Your Scavenger trait found you ${qty}x ${ITEMS[loot].name}!`;
-        updates.$inc = { [`inventory.${loot}`]: qty };
+        if (!updates.$inc) updates.$inc = {};
+        updates.$inc[`inventory.${loot}`] = qty;
     }
     await economyCollection.updateOne({_id: account._id}, updates);
     return { success: true, message: finalMessage + scavengerLoot };
@@ -187,28 +195,24 @@ async function handleRecipes() { let recipeList = ['📜 **Available Recipes:**'
 async function handleCraft(account, itemName) { const itemToCraftId = getItemIdByName(itemName); if (!itemToCraftId || !ITEMS[itemToCraftId].craftable) return `"${itemName}" is not a valid, craftable item. Check \`/recipes\`.`; const recipe = ITEMS[itemToCraftId].recipe; for (const resId in recipe) { const requiredQty = recipe[resId]; const playerQty = account.inventory[resId] || 0; if (playerQty < requiredQty) return `You don't have enough resources! You need ${requiredQty - playerQty} more ${ITEMS[resId].name}.`; } for (const resId in recipe) await modifyInventory(account._id, resId, -recipe[resId]); await modifyInventory(account._id, itemToCraftId, 1); return `You successfully crafted 1x ${ITEMS[itemToCraftId].name}!`; }
 async function handleDaily(account) { const now = new Date(); const lastDaily = account.lastDaily ? new Date(account.lastDaily) : null; if (lastDaily && now.toDateString() === lastDaily.toDateString()) return { success: false, message: "You have already claimed your daily reward today." }; await updateAccount(account._id, { balance: account.balance + DAILY_REWARD, lastDaily: now }); return { success: true, message: `You claimed your daily ${DAILY_REWARD} ${CURRENCY_NAME}! Your new balance is ${account.balance + DAILY_REWARD}.` }; }
 async function handleFlip(account, amount, choice) { if (isNaN(amount) || amount < FLIP_MIN_BET || amount > FLIP_MAX_BET) { return { success: false, message: `Bet must be between ${FLIP_MIN_BET} and ${FLIP_MAX_BET}.` }; } const preLossBalance = account.balance; if (preLossBalance < amount) { return { success: false, message: "You don't have enough bits." }; } const result = secureRandomFloat() < 0.5 ? 'heads' : 'tails'; const lowerChoice = choice.toLowerCase(); let updates = {}; if (result.startsWith(lowerChoice)) { updates = { $inc: { balance: amount } }; await economyCollection.updateOne({ _id: account._id }, updates); return { success: true, message: `It was ${result}! You win ${amount} ${CURRENCY_NAME}! New balance: ${preLossBalance + amount}.` }; } else { updates = { $inc: { balance: -amount } }; const addictTraits = getActiveTraits(account, 'the_addict'); if (addictTraits.length > 0) {
-            // --- FIX START (1/4) ---
             if (preLossBalance > 0) {
-                const lossPercent = Math.min(1, amount / preLossBalance); // Cap loss % at 100%
+                const lossPercent = Math.min(1, amount / preLossBalance); 
                 let totalBuff = 0;
                 addictTraits.forEach(t => totalBuff += 50 * t.level);
                 const workBonus = lossPercent * totalBuff;
                 const buff = { itemId: 'the_addict_rush', expiresAt: Date.now() + 5 * 60 * 1000, effects: { work_bonus_percent: workBonus } };
                 updates.$push = { activeBuffs: buff };
             }
-            // --- FIX END (1/4) ---
         } await economyCollection.updateOne({ _id: account._id }, updates); return { success: false, message: `It was ${result}. You lost ${amount} ${CURRENCY_NAME}. New balance: ${preLossBalance - amount}.` }; } }
 async function handleSlots(account, amount) { const now = Date.now(); const cooldown = SLOTS_COOLDOWN_SECONDS * 1000; if (account.lastSlots && (now - account.lastSlots) < cooldown) return { success: false, message: `Slow down! Wait ${formatDuration((cooldown - (now - account.lastSlots))/1000)}.` }; const preLossBalance = account.balance; if (preLossBalance < amount) { return { success: false, message: "You don't have enough bits." }; } await updateAccount(account._id, { lastSlots: now }); const s1 = SLOT_REELS[0][Math.floor(secureRandomFloat()*SLOT_REELS[0].length)], s2 = SLOT_REELS[1][Math.floor(secureRandomFloat()*SLOT_REELS[1].length)], s3 = SLOT_REELS[2][Math.floor(secureRandomFloat()*SLOT_REELS[2].length)]; const resultString = `[ ${s1} | ${s2} | ${s3} ]`; let winMultiplier = 0; let winMessage = ''; if (s1 === s2 && s2 === s3) { winMultiplier = (s1 === SLOTS_PAYOUTS.jackpot_symbol) ? SLOTS_PAYOUTS.jackpot_multiplier : SLOTS_PAYOUTS.three_of_a_kind; winMessage = (s1 === SLOTS_PAYOUTS.jackpot_symbol) ? "JACKPOT! 💎" : "Three of a kind!"; } else if (s1 === s2 || s2 === s3 || s1 === s3) { winMultiplier = SLOTS_PAYOUTS.two_of_a_kind; winMessage = "Two of a kind!"; } let finalMessage, newBalance, updates = {}; if (winMultiplier > 0) { const winnings = Math.floor(amount * winMultiplier); newBalance = preLossBalance + winnings; finalMessage = `${resultString} - ${winMessage} You win ${winnings} ${CURRENCY_NAME}! New balance: ${newBalance}.`; updates = { $inc: { balance: winnings } }; } else { newBalance = preLossBalance - amount; finalMessage = `${resultString} - You lost ${amount} ${CURRENCY_NAME}. New balance: ${newBalance}.`; updates = { $inc: { balance: -amount } }; const addictTraits = getActiveTraits(account, 'the_addict'); if (addictTraits.length > 0) {
-            // --- FIX START (2/4) ---
             if (preLossBalance > 0) {
-                const lossPercent = Math.min(1, amount / preLossBalance); // Cap loss % at 100%
+                const lossPercent = Math.min(1, amount / preLossBalance);
                 let totalBuff = 0;
                 addictTraits.forEach(t => totalBuff += 50 * t.level);
                 const workBonus = lossPercent * totalBuff;
                 const buff = { itemId: 'the_addict_rush', expiresAt: Date.now() + 5 * 60 * 1000, effects: { work_bonus_percent: workBonus } };
                 updates.$push = { activeBuffs: buff };
             }
-            // --- FIX END (2/4) ---
         } } await economyCollection.updateOne({ _id: account._id }, updates); return { success: true, message: finalMessage }; }
 async function handleTimers(account) { const now = Date.now(); const timers = []; let workCooldown = WORK_COOLDOWN_MINUTES * 60 * 1000; let gatherCooldown = GATHER_COOLDOWN_MINUTES * 60 * 1000; if (account.traits) { getActiveTraits(account, 'prodigy').forEach(t => { const reduction = 5 * t.level; workCooldown *= (1 - reduction / 100); gatherCooldown *= (1 - reduction / 100); }); } const activeBuffs = (account.activeBuffs || []).filter(buff => buff.expiresAt > now); for (const buff of activeBuffs) { const itemDef = ITEMS[buff.itemId]; if (itemDef?.buff?.effects) { if(itemDef.buff.effects.work_cooldown_reduction_ms) workCooldown -= itemDef.buff.effects.work_cooldown_reduction_ms; if(itemDef.buff.effects.gather_cooldown_reduction_ms) gatherCooldown -= itemDef.buff.effects.gather_cooldown_reduction_ms; } } timers.push(`💪 Work: ${(account.lastWork && (now - account.lastWork) < workCooldown) ? formatDuration(((account.lastWork + workCooldown) - now) / 1000) : 'Ready!'}`); timers.push(`⛏️ Gather: ${(account.lastGather && (now - account.lastGather) < gatherCooldown) ? formatDuration(((account.lastGather + gatherCooldown) - now) / 1000) : 'Ready!'}`); const nextDaily = new Date(); nextDaily.setUTCDate(nextDaily.getUTCDate() + 1); nextDaily.setUTCHours(0, 0, 0, 0); timers.push(`📅 Daily: ${account.lastDaily && new Date(account.lastDaily).getUTCDate() === new Date().getUTCDate() ? formatDuration((nextDaily - now) / 1000) : 'Ready!'}`); const slotsTimeLeft = (account.lastSlots || 0) + SLOTS_COOLDOWN_SECONDS * 1000 - now; if (slotsTimeLeft > 0) timers.push(`🎰 Slots: ${formatDuration(slotsTimeLeft / 1000)}`); if (account.smelting && account.smelting.finishTime > now) timers.push(`🔥 Smelting: ${formatDuration((account.smelting.finishTime - now) / 1000)}`); if (activeBuffs.length > 0) { timers.push(`\n**Active Buffs:**`); activeBuffs.forEach(buff => { const itemDef = ITEMS[buff.itemId]; const timeLeft = formatDuration((buff.expiresAt - now) / 1000); timers.push(`${itemDef?.emoji || '❔'} ${itemDef?.name || 'Unknown Buff'}: ${timeLeft} remaining`); }); } const name = account.drednotName || account.displayName || `User ${account._id}`; return [`**Personal Cooldowns for ${name}:**`].concat(timers.map(t => t.startsWith('**') ? t : `> ${t}`)); }
 async function handleSmelt(account, itemName, quantity) { const smelterCount = account.inventory['smelter'] || 0; if (smelterCount < 1) return { success: false, message: "You need to craft a 🔥 Smelter first!" }; if (account.smelting && account.smelting.finishTime > Date.now()) return { success: false, message: `You are already processing something! Wait for it to finish.` }; const itemIdToProcess = getItemIdByName(itemName); if (!itemIdToProcess) return { success: false, message: `Invalid item: ${itemName}` }; const smeltableOreResult = SMELTABLE_ORES[itemIdToProcess]; const cookableFoodResult = COOKABLE_FOODS[itemIdToProcess]; let resultItemId; let processType; if (smeltableOreResult) { resultItemId = smeltableOreResult; processType = 'smelting'; } else if (cookableFoodResult) { resultItemId = cookableFoodResult; processType = 'cooking'; } else { return { success: false, message: `You can't smelt or cook that. Valid inputs: Iron Ore, Copper Ore, Raw Meat.` }; } if (isNaN(quantity) || quantity <= 0) return { success: false, message: "Invalid quantity." }; if ((account.inventory[itemIdToProcess] || 0) < quantity) return { success: false, message: `You don't have enough ${ITEMS[itemIdToProcess].name}.` }; const coalNeeded = quantity * SMELT_COAL_COST_PER_ORE; if ((account.inventory['coal'] || 0) < coalNeeded) return { success: false, message: `You don't have enough coal. You need ${coalNeeded} ⚫ Coal.` }; await modifyInventory(account._id, itemIdToProcess, -quantity); await modifyInventory(account._id, 'coal', -coalNeeded); let timePerItem = (SMELT_COOLDOWN_SECONDS_PER_ORE / smelterCount) * 1000; if (currentGlobalEvent && currentGlobalEvent.effect.type === 'super_smelter') { timePerItem /= 2; } const totalTime = timePerItem * quantity; const finishTime = Date.now() + totalTime; await updateAccount(account._id, { smelting: { resultItemId: resultItemId, quantity, finishTime } }); let eventText = currentGlobalEvent && currentGlobalEvent.effect.type === 'super_smelter' ? ` (Thanks to ${currentGlobalEvent.name}!)` : ''; return { success: true, message: `You begin ${processType} ${quantity}x ${ITEMS[itemIdToProcess].name}. It will take ${formatDuration(totalTime/1000)}${eventText}.` }; }
@@ -280,7 +284,10 @@ async function handleSlashCommand(interaction) {
     if (!account) { account = await createNewAccount(user.id, 'discord'); isNewUser = true; } else { account = await selfHealAccount(account); }
     if (account.wasBumped) { await updateAccount(user.id, { wasBumped: false }); const bumpedMessage = `**Notice: Your Display Name Has Been Reset!**\n\n` + `A player from Drednot has registered with the name you were using. Since Drednot names have priority, your display name has been reset.\n\n` + `Please use the \`/name\` command to choose a new, unique display name, or use \`/link\` to connect your own Drednot account.`; return interaction.editReply({ content: bumpedMessage }); }
     if (commandName === 'info') { const name = options.getString('name'); const itemId = getItemIdByName(name); const traitId = Object.keys(TRAITS).find(k => TRAITS[k].name.toLowerCase() === name.toLowerCase()); let infoMessage = ''; if (itemId) { infoMessage = handleItemInfo(itemId); } else if (traitId) { const trait = TRAITS[traitId]; let effectText = ''; switch (traitId) { case 'scavenger': effectText = `Grants a **5%** chance per level to find bonus resources from /work.`; break; case 'prodigy': effectText = `Reduces /work and /gather cooldowns by **5%** per level.`; break; case 'wealth': effectText = `Increases Bits earned from /work by **5%** per level.`; break; case 'surveyor': effectText = `Grants a **2%** chance per level to double your entire haul from /gather.`; break; case 'collector': effectText = `Increases the bonus reward for first-time crafts by **20%** per level.`; break; case 'the_addict': effectText = `After losing a gamble, boosts your next /work by a % based on wealth lost, multiplied by **50%** per level.`; break; case 'zealot': effectText = `Each 'Zeal' stack boosts rewards by **2.5%** per level. Stacks decay after 10 minutes.`; break; default: effectText = trait.description.replace(/{.*?}/g, '...'); } infoMessage = `**Trait: ${trait.name} (${trait.rarity})**\n*${effectText}*\nMax Level: ${trait.maxLevel}`; } else { infoMessage = `Could not find an item or trait named "${name}".`; } return interaction.editReply({ content: infoMessage });}
-    if (commandName === 'traits') { const sub = options.getSubcommand(); if (sub === 'view') { let message = `**Your Traits:**\n`; if (account.traits && account.traits.slots) { for (const trait of account.traits.slots) { const t = TRAITS[trait.name]; message += `> **${t.name} (Level ${trait.level})** - *${t.rarity}*\n`; } } else { message = "You have no traits yet."; } return interaction.editReply({ content: message }); } if (sub === 'reroll') { if ((account.inventory['trait_reforger'] || 0) < 1) return interaction.editReply({ content: `You need a ✨ Trait Reforger to do this. Get them from /gather!` }); await modifyInventory(user.id, 'trait_reforger', -1); const newTraits = [rollNewTrait(), rollNewTrait()]; await updateAccount(user.id, { 'traits.slots': newTraits }); let message = `**Traits Reforged!** You consumed a Trait Reforger and received:\n`; for (const trait of newTraits) { const t = TRAITS[trait.name]; message += `> **${t.name} (Level ${trait.level})** - *${t.rarity}*\n`; } return interaction.editReply({ content: message }); } }
+    if (commandName === 'traits') { const sub = options.getSubcommand(); if (sub === 'view') { let message = `**Your Traits:**\n`; if (account.traits && account.traits.slots) { for (const trait of account.traits.slots) { const t = TRAITS[trait.name]; message += `> **${t.name} (Level ${trait.level})** - *${t.rarity}*\n`; } } else { message = "You have no traits yet."; } return interaction.editReply({ content: message }); } if (sub === 'reroll') { if ((account.inventory['trait_reforger'] || 0) < 1) return interaction.editReply({ content: `You need a ✨ Trait Reforger to do this. Get them from /gather!` }); await modifyInventory(user.id, 'trait_reforger', -1); const newTraits = [rollNewTrait(), rollNewTrait()];
+        // --- LINGERING BUFF FIX ---
+        await economyCollection.updateOne({ _id: account._id }, { $set: { 'traits.slots': newTraits }, $pull: { activeBuffs: { itemId: 'the_addict_rush' } } });
+        let message = `**Traits Reforged!** You consumed a Trait Reforger and received:\n`; for (const trait of newTraits) { const t = TRAITS[trait.name]; message += `> **${t.name} (Level ${trait.level})** - *${t.rarity}*\n`; } return interaction.editReply({ content: message }); } }
     if (['market', 'recipes', 'crateshop'].includes(commandName)) { let result, title, type; if (commandName === 'market') { const filter = options.getString('filter'); result = await handleMarket(filter); title = filter ? `Market (Filter: ${filter})` : "Market"; type = 'market'; } if (commandName === 'recipes') { const recipeLines = (await handleRecipes()).split('\n'); title = recipeLines.shift(); result = { success: true, lines: recipeLines }; type = 'recipes'; } if (commandName === 'crateshop') { result = await handleCrateShop(); title = "The Collector's Crates"; type = 'crateshop'; } if (!result.success) return interaction.editReply({ content: result.lines[0], components: [] }); const { discord } = getPaginatedResponse(user.id, type, result.lines, title, 0); await interaction.editReply(discord); return; }
     if (commandName === 'leaderboard') { const result = await handleLeaderboard(); if (!result.success) return interaction.editReply({ content: result.lines[0], components: [] }); const { discord } = getPaginatedResponse(user.id, 'leaderboard', result.lines, 'Leaderboard', 0); await interaction.editReply(discord); return; }
     if (commandName === 'link') { const drednotNameToLink = options.getString('drednot_name'); if (account.drednotName) { return interaction.editReply({ content: `Your Discord account is already linked to the Drednot account **${account.drednotName}**.` }); } const targetDrednotAccount = await getAccount(drednotNameToLink); if (targetDrednotAccount && targetDrednotAccount.discordId) { return interaction.editReply({ content: `The Drednot account **${drednotNameToLink}** is already linked to another Discord user.` }); } const verificationCode = `${Math.floor(1000 + Math.random() * 9000)}`; await verificationsCollection.insertOne({ _id: verificationCode, discordId: user.id, drednotName: drednotNameToLink, timestamp: Date.now() }); let replyMessage = `**Verification Started!**\nIn Drednot, type: \`!verify ${verificationCode}\`\nThis code expires in 5 minutes.`; if (!isNewUser) { replyMessage += `\n\n**Note:** You have progress on this Discord account. Verifying will merge it with your **${drednotNameToLink}** account.` } await interaction.editReply({ content: replyMessage }); return; }
@@ -300,27 +307,93 @@ async function handleSlashCommand(interaction) {
         case 'smelt': itemName = options.getString('ore_name'); quantity = options.getInteger('quantity'); result = await handleSmelt(account, itemName, quantity); await interaction.editReply({ content: result.message }); break; 
         case 'pay': const recipientUser = options.getUser('user'); amount = options.getInteger('amount'); if (recipientUser.bot) return interaction.editReply({ content: "You can't pay bots." }); const recipientAccount = await getAccount(recipientUser.id); if (!recipientAccount) return interaction.editReply({ content: `That user doesn't have an economy account yet.` }); result = await handlePay(account, recipientAccount, amount); await interaction.editReply({ content: result.message }); break; 
         case 'marketsell': itemName = options.getString('item_name'); quantity = options.getInteger('quantity'); price = options.getNumber('price'); const itemIdToSell = getItemIdByName(itemName); if (!itemIdToSell) return interaction.editReply({ content: 'Invalid item name.' }); if (quantity <= 0 || price <= 0) return interaction.editReply({ content: 'Quantity and price must be positive.' }); if ((account.inventory[itemIdToSell] || 0) < quantity) return interaction.editReply({ content: 'You do not have enough of that item to sell.' }); try { await modifyInventory(account._id, itemIdToSell, -quantity); const newListingId = await findNextAvailableListingId(marketCollection); const sellerName = account.drednotName || account.displayName || `User ${account._id}`; await marketCollection.insertOne({ listingId: newListingId, sellerId: account._id, sellerName: sellerName, itemId: itemIdToSell, quantity, price }); await interaction.editReply({ content: `You listed ${quantity}x ${ITEMS[itemIdToSell].name} for sale. Listing ID: **${newListingId}**` }); } catch (error) { if (error.code === 11000) { await modifyInventory(account._id, itemIdToSell, quantity); await interaction.editReply({ content: 'The market is busy and that listing ID was just taken. Your items have been returned. Please try again.' }); } else { console.error("Failed to list item:", error); await modifyInventory(account._id, itemIdToSell, quantity); await interaction.editReply({ content: 'An unexpected error occurred while listing your item. Please try again.' }); } } break; 
-        case 'marketbuy': listingId = options.getInteger('listing_id'); const listingToBuy = await marketCollection.findOne({ listingId: listingId }); if (!listingToBuy) return interaction.editReply({ content: 'Invalid listing ID.' }); if (listingToBuy.sellerId === account._id) return interaction.editReply({ content: "You can't buy your own listing." }); const totalCost = Math.round(listingToBuy.quantity * listingToBuy.price); if (account.balance < totalCost) return interaction.editReply({ content: `You can't afford this. It costs ${totalCost} ${CURRENCY_NAME}.` }); await updateAccount(account._id, { balance: account.balance - totalCost }); await modifyInventory(account._id, listingToBuy.itemId, listingToBuy.quantity); const sellerAccount = await getAccount(listingToBuy.sellerId); if (sellerAccount) { let taxRate = MARKET_TAX_RATE; if (currentGlobalEvent && currentGlobalEvent.effect.type === 'market_tax') { taxRate = currentGlobalEvent.effect.rate; } const earnings = Math.round(totalCost * (1 - taxRate)); await economyCollection.updateOne({ _id: sellerAccount._id }, { $inc: { balance: earnings } }); } await marketCollection.deleteOne({ _id: listingToBuy._id }); const sellerName = sellerAccount ? (sellerAccount.drednotName || sellerAccount.displayName || `User ${sellerAccount._id}`) : listingToBuy.sellerName; await interaction.editReply({ content: `You bought ${listingToBuy.quantity}x ${ITEMS[listingToBuy.itemId].name} for **${totalCost} ${CURRENCY_NAME}** from *${sellerName}*!` }); break; 
-        case 'marketcancel': const listingIdToCancel = options.getInteger('listing_id'); const listingToCancel = await marketCollection.findOne({ listingId: listingIdToCancel }); if (!listingToCancel || listingToCancel.sellerId !== account._id) return interaction.editReply({ content: 'This is not your listing or it does not exist.' }); await modifyInventory(account._id, listingToCancel.itemId, listingToCancel.quantity); await marketCollection.deleteOne({ _id: listingToCancel._id }); await interaction.editReply({ content: `You cancelled your listing for ${listingToCancel.quantity}x ${ITEMS[listingToCancel.itemId].name}.` }); break; 
-        case 'crateshopbuy': const crateNameToOpenSlash = options.getString('crate_name'); const amountToOpenSlash = options.getInteger('amount'); if (amountToOpenSlash <= 0) { return interaction.editReply({ content: "Please enter a valid amount to open." }); } const crateIdSlash = Object.keys(LOOTBOXES).find(k => LOOTBOXES[k].name.toLowerCase() === crateNameToOpenSlash.toLowerCase()); if (!crateIdSlash) { return interaction.editReply({ content: `The Collector doesn't sell a crate named "${crateNameToOpenSlash}". Check the /crateshop.` }); } const listingSlash = await lootboxCollection.findOne({ lootboxId: crateIdSlash }); if (!listingSlash) { return interaction.editReply({ content: `The Collector is not selling any "${crateNameToOpenSlash}" right now.` }); } if (listingSlash.quantity < amountToOpenSlash) { return interaction.editReply({ content: `The Collector only has ${listingSlash.quantity} of those crates in stock.` }); } const totalCostSlash = listingSlash.price * amountToOpenSlash; const preLossBalance = account.balance; if (preLossBalance < totalCostSlash) { return interaction.editReply({ content: `You can't afford that. It costs ${totalCostSlash} ${CURRENCY_NAME} to open ${amountToOpenSlash}.` }); } let updates = { $inc: { balance: -totalCostSlash } }; let totalRewardsSlash = {}; for (let i = 0; i < amountToOpenSlash; i++) { const reward = openLootbox(listingSlash.lootboxId); if (reward.type === 'bits') { totalRewardsSlash.bits = (totalRewardsSlash.bits || 0) + reward.amount; } else { totalRewardsSlash[reward.id] = (totalRewardsSlash[reward.id] || 0) + reward.amount; } } let rewardMessagesSlash = []; for (const rewardId in totalRewardsSlash) { if (rewardId === 'bits') { updates.$inc.balance += totalRewardsSlash[rewardId]; rewardMessagesSlash.push(`**${totalRewardsSlash[rewardId]}** ${CURRENCY_NAME}`); } else { if (!updates.$inc[`inventory.${rewardId}`]) updates.$inc[`inventory.${rewardId}`] = 0; updates.$inc[`inventory.${rewardId}`] += totalRewardsSlash[rewardId]; rewardMessagesSlash.push(`${ITEMS[rewardId].emoji} **${totalRewardsSlash[rewardId]}x** ${ITEMS[rewardId].name}`); } } const addictTraits = getActiveTraits(account, 'the_addict'); if (addictTraits.length > 0) {
-            // --- FIX START (3/4) ---
-            if (preLossBalance > 0) {
-                const lossPercent = Math.min(1, totalCostSlash / preLossBalance); // Cap loss % at 100%
-                let totalBuff = 0;
-                addictTraits.forEach(t => totalBuff += 50 * t.level);
-                const workBonus = lossPercent * totalBuff;
-                const buff = { itemId: 'the_addict_rush', expiresAt: Date.now() + 5 * 60 * 1000, effects: { work_bonus_percent: workBonus } };
-                updates.$push = { activeBuffs: buff };
+        case 'marketbuy': 
+            listingId = options.getInteger('listing_id');
+            const listingToBuy = await marketCollection.findOneAndDelete({ listingId: listingId });
+            if (!listingToBuy) return interaction.editReply({ content: 'That listing does not exist or was just purchased by someone else.' });
+            if (listingToBuy.sellerId === account._id) {
+                await marketCollection.insertOne(listingToBuy);
+                return interaction.editReply({ content: "You can't buy your own listing." });
             }
-            // --- FIX END (3/4) ---
-        } await economyCollection.updateOne({ _id: account._id }, updates); await lootboxCollection.updateOne({ _id: listingSlash._id }, { $inc: { quantity: -amountToOpenSlash } }); await lootboxCollection.deleteMany({ quantity: { $lte: 0 } }); await interaction.editReply({ content: `You opened ${amountToOpenSlash}x ${LOOTBOXES[listingSlash.lootboxId].name} and received: ${rewardMessagesSlash.join(', ')}!` }); break;
+            const totalCost = Math.round(listingToBuy.quantity * listingToBuy.price);
+            if (account.balance < totalCost) {
+                await marketCollection.insertOne(listingToBuy);
+                return interaction.editReply({ content: `You can't afford this. It costs ${totalCost} ${CURRENCY_NAME}.` });
+            }
+            await economyCollection.updateOne({ _id: account._id }, { $inc: { balance: -totalCost } });
+            await modifyInventory(account._id, listingToBuy.itemId, listingToBuy.quantity);
+            const sellerAccount = await getAccount(listingToBuy.sellerId);
+            if (sellerAccount) {
+                let taxRate = MARKET_TAX_RATE;
+                if (currentGlobalEvent && currentGlobalEvent.effect.type === 'market_tax') { taxRate = currentGlobalEvent.effect.rate; }
+                const earnings = Math.round(totalCost * (1 - taxRate));
+                await economyCollection.updateOne({ _id: sellerAccount._id }, { $inc: { balance: earnings } });
+            }
+            const sellerName = sellerAccount ? (sellerAccount.drednotName || sellerAccount.displayName || `User ${sellerAccount._id}`) : listingToBuy.sellerName;
+            await interaction.editReply({ content: `You bought ${listingToBuy.quantity}x ${ITEMS[listingToBuy.itemId].name} for **${totalCost} ${CURRENCY_NAME}** from *${sellerName}*!` });
+            break; 
+        case 'marketcancel': const listingIdToCancel = options.getInteger('listing_id'); const listingToCancel = await marketCollection.findOne({ listingId: listingIdToCancel }); if (!listingToCancel || listingToCancel.sellerId !== account._id) return interaction.editReply({ content: 'This is not your listing or it does not exist.' }); await modifyInventory(account._id, listingToCancel.itemId, listingToCancel.quantity); await marketCollection.deleteOne({ _id: listingToCancel._id }); await interaction.editReply({ content: `You cancelled your listing for ${listingToCancel.quantity}x ${ITEMS[listingToCancel.itemId].name}.` }); break; 
+        case 'crateshopbuy': 
+            const crateNameToOpenSlash = options.getString('crate_name');
+            const amountToOpenSlash = options.getInteger('amount');
+            if (amountToOpenSlash <= 0) return interaction.editReply({ content: "Please enter a valid amount to open." });
+            const crateIdSlash = Object.keys(LOOTBOXES).find(k => LOOTBOXES[k].name.toLowerCase() === crateNameToOpenSlash.toLowerCase());
+            if (!crateIdSlash) return interaction.editReply({ content: `The Collector doesn't sell a crate named "${crateNameToOpenSlash}". Check the /crateshop.` });
+            
+            const listingUpdateResult = await lootboxCollection.findOneAndUpdate(
+                { lootboxId: crateIdSlash, quantity: { $gte: amountToOpenSlash } },
+                { $inc: { quantity: -amountToOpenSlash } },
+                { returnDocument: 'before' }
+            );
+
+            if (!listingUpdateResult) return interaction.editReply({ content: `The Collector doesn't have enough of that crate, or it was just purchased.` });
+            
+            const listingSlash = listingUpdateResult;
+            const totalCostSlash = listingSlash.price * amountToOpenSlash;
+            const preLossBalance = account.balance;
+            if (preLossBalance < totalCostSlash) {
+                await lootboxCollection.updateOne({ _id: listingSlash._id }, { $inc: { quantity: amountToOpenSlash } }); // Refund the crate
+                return interaction.editReply({ content: `You can't afford that. It costs ${totalCostSlash} ${CURRENCY_NAME} to open ${amountToOpenSlash}.` });
+            }
+            let updates = { $inc: { balance: -totalCostSlash } };
+            let totalRewardsSlash = {};
+            for (let i = 0; i < amountToOpenSlash; i++) {
+                const reward = openLootbox(listingSlash.lootboxId);
+                if (reward.type === 'bits') { totalRewardsSlash.bits = (totalRewardsSlash.bits || 0) + reward.amount; }
+                else { totalRewardsSlash[reward.id] = (totalRewardsSlash[reward.id] || 0) + reward.amount; }
+            }
+            let rewardMessagesSlash = [];
+            for (const rewardId in totalRewardsSlash) {
+                if (rewardId === 'bits') {
+                    updates.$inc.balance += totalRewardsSlash[rewardId];
+                    rewardMessagesSlash.push(`**${totalRewardsSlash[rewardId]}** ${CURRENCY_NAME}`);
+                } else {
+                    if (!updates.$inc[`inventory.${rewardId}`]) updates.$inc[`inventory.${rewardId}`] = 0;
+                    updates.$inc[`inventory.${rewardId}`] += totalRewardsSlash[rewardId];
+                    rewardMessagesSlash.push(`${ITEMS[rewardId].emoji} **${totalRewardsSlash[rewardId]}x** ${ITEMS[rewardId].name}`);
+                }
+            }
+            const addictTraits = getActiveTraits(account, 'the_addict');
+            if (addictTraits.length > 0) {
+                if (preLossBalance > 0) {
+                    const lossPercent = Math.min(1, totalCostSlash / preLossBalance);
+                    let totalBuff = 0;
+                    addictTraits.forEach(t => totalBuff += 50 * t.level);
+                    const workBonus = lossPercent * totalBuff;
+                    const buff = { itemId: 'the_addict_rush', expiresAt: Date.now() + 5 * 60 * 1000, effects: { work_bonus_percent: workBonus } };
+                    updates.$push = { activeBuffs: buff };
+                }
+            }
+            await economyCollection.updateOne({ _id: account._id }, updates);
+            await lootboxCollection.deleteMany({ quantity: { $lte: 0 } });
+            await interaction.editReply({ content: `You opened ${amountToOpenSlash}x ${LOOTBOXES[listingSlash.lootboxId].name} and received: ${rewardMessagesSlash.join(', ')}!` });
+            break;
     }
     if (isNewUser) { const welcomeMessage = `👋 **Welcome!**\nI've created a temporary economy account for you with a starting balance of **${STARTING_BALANCE} ${CURRENCY_NAME}** and two random traits.\n\n` + `Use \`/traits view\` to see what you got! You can use \`/name\` to set a custom name for the leaderboard if you don't plan on linking a Drednot account.\n\n` + `Alternatively, click the button below to start the process of linking your Drednot.io account.`; const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('guide_link_account').setLabel('Link Drednot Account').setStyle(ButtonStyle.Success).setEmoji('🔗')); await interaction.followUp({ content: welcomeMessage, components: [row], flags: MessageFlags.Ephemeral }); }
 }
 
 app.get("/", (req, res) => res.send("Bot is alive!"));
 
-// [FIXED] This block is restored from the old version and updated for new features.
 app.post('/command', async (req, res) => {
     const apiKey = req.headers['x-api-key'];
     if (apiKey !== YOUR_API_KEY) return res.status(401).send('Error: Invalid API key');
@@ -350,24 +423,110 @@ app.post('/command', async (req, res) => {
     switch (command) {
         case 'info': if (args.length === 0) { responseMessage = "Usage: !info <item/trait name>"; break; } const name = args.join(' '); const itemId = getItemIdByName(name); const traitId = Object.keys(TRAITS).find(k => TRAITS[k].name.toLowerCase() === name.toLowerCase()); if (itemId) { responseMessage = cleanText(handleItemInfo(itemId)); } else if (traitId) { const trait = TRAITS[traitId]; let effectText = ''; switch (traitId) { case 'scavenger': effectText = `Grants a 5% chance per level to find bonus resources from /work.`; break; case 'prodigy': effectText = `Reduces /work and /gather cooldowns by 5% per level.`; break; case 'wealth': effectText = `Increases Bits earned from /work by 5% per level.`; break; case 'surveyor': effectText = `Grants a 2% chance per level to double your entire haul from /gather.`; break; case 'collector': effectText = `Increases the bonus reward for first-time crafts by 20% per level.`; break; case 'the_addict': effectText = `After losing a gamble, boosts your next /work by a % based on wealth lost, multiplied by 50% per level.`; break; case 'zealot': effectText = `Each 'Zeal' stack boosts rewards by 2.5% per level. Stacks decay after 10 minutes.`; break; default: effectText = trait.description.replace(/{.*?}/g, '...'); } responseMessage = [`Trait: ${trait.name} (${trait.rarity})`, effectText, `Max Level: ${trait.maxLevel}`].join('\n'); } else { responseMessage = `Could not find an item or trait named "${name}".`; } break;
         case 'traits': let traitMessage = `Your Traits:\n`; if(account.traits && account.traits.slots) { for (const trait of account.traits.slots) { const t = TRAITS[trait.name]; traitMessage += `> ${t.name} (Level ${trait.level}) - ${t.rarity}\n`; } } else { traitMessage = "You have no traits yet."; } responseMessage = cleanText(traitMessage); break;
-        case 'traitroll': if ((account.inventory['trait_reforger'] || 0) < 1) { responseMessage = `You need a Trait Reforger to do this.`; } else { await modifyInventory(username, 'trait_reforger', -1); const newTraits = [rollNewTrait(), rollNewTrait()]; await updateAccount(username, { 'traits.slots': newTraits }); let rollMessage = `You consumed a Trait Reforger and received:\n`; for (const trait of newTraits) { const t = TRAITS[trait.name]; rollMessage += `> ${t.name} (Level ${trait.level}) - ${t.rarity}\n`; } responseMessage = cleanText(rollMessage); } break;
-        case 'eat': if (args.length === 0) { responseMessage = "Usage: !eat <food name>"; break; } const foodName = args.join(' '); responseMessage = await handleEat(account, foodName); break; case 'm': case 'market': const marketFilter = args.length > 0 ? args.join(' ') : null; result = await handleMarket(marketFilter); if (!result.success) { responseMessage = result.lines[0]; break; } title = marketFilter ? `Market (Filter: ${marketFilter})` : "Market"; const marketPage = getPaginatedResponse(identifier, 'market', result.lines, title, 0); responseMessage = marketPage.game.map(line => cleanText(line)); break; case 'lb': case 'leaderboard': result = await handleLeaderboard(); if (!result.success) { responseMessage = result.lines[0]; break; } title = "Leaderboard"; const lbPage = getPaginatedResponse(identifier, 'leaderboard', result.lines, title, 0); responseMessage = lbPage.game.map(line => cleanText(line)); break; case 'recipes': lines = (await handleRecipes()).split('\n'); title = lines.shift(); result = getPaginatedResponse(identifier, 'recipes', lines, title, 0); responseMessage = result.game.map(line => cleanText(line)); break; case 'bal': case 'balance': responseMessage = `Your balance is: ${account.balance} ${CURRENCY_NAME}.`; break; case 'work': result = await handleWork(account); responseMessage = result.message; break; case 'gather': result = await handleGather(account); responseMessage = result.message; break; case 'inv': case 'inventory': const invFilter = args.length > 0 ? args.join(' ') : null; responseMessage = cleanText(handleInventory(account, invFilter)); break; case 'craft': if (args.length === 0) { responseMessage = "Usage: !craft <item name>"; } else { let craftResult = await handleCraft(account, args.join(' ')); responseMessage = craftResult.replace('`/recipes`', '`!recipes`'); } break; case 'daily': result = await handleDaily(account); responseMessage = result.message; break; case 'flip': if (args.length < 2) { responseMessage = "Usage: !flip <amount> <h/t>"; } else { result = await handleFlip(account, parseInt(args[0]), args[1].toLowerCase()); responseMessage = result.message; } break; case 'slots': if (args.length < 1) { responseMessage = "Usage: !slots <amount>"; } else { result = await handleSlots(account, parseInt(args[0])); responseMessage = result.message; } break; case 'timers': result = await handleTimers(account); responseMessage = result.map(line => cleanText(line)); break; case 'smelt': if (args.length < 1) { responseMessage = "Usage: !smelt <item name> [quantity]"; break; } const quantity = args.length > 1 && !isNaN(parseInt(args[args.length - 1])) ? parseInt(args.pop()) : 1; const itemName = args.join(' '); result = await handleSmelt(account, itemName, quantity); responseMessage = result.message; break; case 'pay': if (args.length < 2) { responseMessage = "Usage: !pay <username> <amount>"; } else { const amountToPay = parseInt(args[args.length - 1]); const recipientName = args.slice(0, -1).join(' '); const recipientAccount = await getAccount(recipientName); if (!recipientAccount) { responseMessage = `Could not find a player named "${recipientName}".`; } else { result = await handlePay(account, recipientAccount, amountToPay); responseMessage = result.message.replace(/\*/g, ''); } } break;
+        case 'traitroll': if ((account.inventory['trait_reforger'] || 0) < 1) { responseMessage = `You need a Trait Reforger to do this.`; } else { await modifyInventory(username, 'trait_reforger', -1); const newTraits = [rollNewTrait(), rollNewTrait()]; await economyCollection.updateOne({ _id: account._id }, { $set: { 'traits.slots': newTraits }, $pull: { activeBuffs: { itemId: 'the_addict_rush' } } }); let rollMessage = `You consumed a Trait Reforger and received:\n`; for (const trait of newTraits) { const t = TRAITS[trait.name]; rollMessage += `> ${t.name} (Level ${trait.level}) - ${t.rarity}\n`; } responseMessage = cleanText(rollMessage); } break;
+        case 'eat': if (args.length === 0) { responseMessage = "Usage: !eat <food name>"; break; } const foodName = args.join(' '); responseMessage = await handleEat(account, foodName); break; case 'm': case 'market': const marketFilter = args.length > 0 ? args.join(' ') : null; result = await handleMarket(marketFilter); if (!result.success) { responseMessage = result.lines[0]; break; } title = marketFilter ? `Market (Filter: ${marketFilter})` : "Market"; const marketPage = getPaginatedResponse(identifier, 'market', result.lines, title, 0); responseMessage = marketPage.game.map(line => cleanText(line)); break; case 'lb': case 'leaderboard': result = await handleLeaderboard(); if (!result.success) { responseMessage = result.lines[0]; break; } title = "Leaderboard"; const lbPage = getPaginatedResponse(identifier, 'leaderboard', result.lines, title, 0); responseMessage = lbPage.game.map(line => cleanText(line)); break; case 'recipes': lines = (await handleRecipes()).split('\n'); title = lines.shift(); result = getPaginatedResponse(identifier, 'recipes', lines, title, 0); responseMessage = result.game.map(line => cleanText(line)); break; case 'bal': case 'balance': responseMessage = `Your balance is: ${account.balance} ${CURRENCY_NAME}.`; break; case 'work': result = await handleWork(account); responseMessage = result.message; break; case 'gather': result = await handleGather(account); responseMessage = result.message; break; case 'inv': case 'inventory': const invFilter = args.length > 0 ? args.join(' ') : null; responseMessage = cleanText(handleInventory(account, invFilter)); break; case 'craft': if (args.length === 0) { responseMessage = "Usage: !craft <item name>"; } else { let craftResult = await handleCraft(account, args.join(' ')); responseMessage = craftResult.replace('`/recipes`', '`!recipes`'); } break; case 'daily': result = await handleDaily(account); responseMessage = result.message; break;
+        case 'flip':
+            if (args.length < 2) { responseMessage = "Usage: !flip <amount> <h/t>"; break; }
+            const flipAmount = parseInt(args[0]);
+            if (isNaN(flipAmount) || flipAmount <= 0) { responseMessage = "Please enter a valid, positive amount."; break; }
+            result = await handleFlip(account, flipAmount, args[1].toLowerCase());
+            responseMessage = result.message;
+            break;
+        case 'slots':
+            if (args.length < 1) { responseMessage = "Usage: !slots <amount>"; break; }
+            const slotsAmount = parseInt(args[0]);
+            if (isNaN(slotsAmount) || slotsAmount <= 0) { responseMessage = "Please enter a valid, positive amount."; break; }
+            result = await handleSlots(account, slotsAmount);
+            responseMessage = result.message;
+            break;
+        case 'timers': result = await handleTimers(account); responseMessage = result.map(line => cleanText(line)); break; case 'smelt': if (args.length < 1) { responseMessage = "Usage: !smelt <item name> [quantity]"; break; } const quantity = args.length > 1 && !isNaN(parseInt(args[args.length - 1])) ? parseInt(args.pop()) : 1; const itemName = args.join(' '); result = await handleSmelt(account, itemName, quantity); responseMessage = result.message; break;
+        case 'pay':
+            if (args.length < 2) { responseMessage = "Usage: !pay <username> <amount>"; break; }
+            const amountToPay = parseInt(args[args.length - 1]);
+            if (isNaN(amountToPay) || amountToPay <= 0) { responseMessage = "Please enter a valid, positive amount."; break; }
+            const recipientName = args.slice(0, -1).join(' ');
+            const recipientAccount = await getAccount(recipientName);
+            if (!recipientAccount) { responseMessage = `Could not find a player named "${recipientName}".`; }
+            else { result = await handlePay(account, recipientAccount, amountToPay); responseMessage = result.message.replace(/\*/g, ''); }
+            break;
         case 'ms': case 'marketsell': if (args.length < 3) { responseMessage = "Usage: !marketsell [item] [qty] [price]"; } else { const itemName = args.slice(0, -2).join(' '); const qty = parseInt(args[args.length - 2]); const price = parseFloat(args[args.length - 1]); const itemId = getItemIdByName(itemName); if (!itemId || isNaN(qty) || isNaN(price) || qty <= 0 || price <= 0) { responseMessage = "Invalid format."; } else if ((account.inventory[itemId] || 0) < qty) { responseMessage = "You don't have enough of that item."; } else { try { await modifyInventory(account._id, itemId, -qty); const newListingId = await findNextAvailableListingId(marketCollection); const sellerName = account.drednotName || account.displayName || account._id; await marketCollection.insertOne({ listingId: newListingId, sellerId: account._id, sellerName: sellerName, itemId, quantity: qty, price }); responseMessage = `Listed ${qty}x ${ITEMS[itemId].name}. ID: ${newListingId}`; } catch (error) { if (error.code === 11000) { await modifyInventory(account._id, itemId, qty); responseMessage = "Market is busy, ID was taken. Items returned. Try again."; } else { console.error("Failed to list item via in-game command:", error); await modifyInventory(account._id, itemId, qty); responseMessage = "An unexpected error occurred. Items returned."; } } } } break;
-        case 'mb': case 'marketbuy': if (args.length < 1) { responseMessage = "Usage: !marketbuy [listing_id]"; } else { const listingId = parseInt(args[0]); if(isNaN(listingId)) { responseMessage = "Listing ID must be a number."; break; } const listingToBuy = await marketCollection.findOne({ listingId: listingId }); if (!listingToBuy) { responseMessage = 'Invalid listing ID.'; break; } if (listingToBuy.sellerId === account._id) { responseMessage = "You can't buy your own listing."; break; } const totalCost = Math.round(listingToBuy.quantity * listingToBuy.price); if (account.balance < totalCost) { responseMessage = "You can't afford this."; } else { await updateAccount(account._id, { balance: account.balance - totalCost }); await modifyInventory(account._id, listingToBuy.itemId, listingToBuy.quantity); const sellerAccount = await getAccount(listingToBuy.sellerId); if (sellerAccount) { let taxRate = MARKET_TAX_RATE; if (currentGlobalEvent && currentGlobalEvent.effect.type === 'market_tax') { taxRate = currentGlobalEvent.effect.rate; } const earnings = Math.round(totalCost * (1 - taxRate)); await updateAccount(sellerAccount._id, { balance: sellerAccount.balance + earnings }); } await marketCollection.deleteOne({ _id: listingToBuy._id }); const sellerName = sellerAccount ? (sellerAccount.drednotName || sellerAccount.displayName || `User ${sellerAccount._id}`) : listingToBuy.sellerName; responseMessage = `You bought ${listingToBuy.quantity}x ${ITEMS[listingToBuy.itemId].name} for ${totalCost} ${CURRENCY_NAME} from ${sellerName}!`; if (currentGlobalEvent && currentGlobalEvent.effect.type === 'market_tax' && currentGlobalEvent.effect.rate === 0) { responseMessage += ` (Tax-free thanks to ${currentGlobalEvent.name}!)`; } } } break;
+        case 'mb': case 'marketbuy':
+            if (args.length < 1) { responseMessage = "Usage: !marketbuy [listing_id]"; break; }
+            const listingId = parseInt(args[0]);
+            if (isNaN(listingId)) { responseMessage = "Listing ID must be a number."; break; }
+            const listingToBuy = await marketCollection.findOneAndDelete({ listingId: listingId });
+            if (!listingToBuy) { responseMessage = 'That listing does not exist or was just purchased.'; break; }
+            if (listingToBuy.sellerId === account._id) { await marketCollection.insertOne(listingToBuy); responseMessage = "You can't buy your own listing."; break; }
+            const totalCostMb = Math.round(listingToBuy.quantity * listingToBuy.price);
+            if (account.balance < totalCostMb) { await marketCollection.insertOne(listingToBuy); responseMessage = "You can't afford this."; break; }
+            await economyCollection.updateOne({ _id: account._id }, { $inc: { balance: -totalCostMb } });
+            await modifyInventory(account._id, listingToBuy.itemId, listingToBuy.quantity);
+            const sellerAccount = await getAccount(listingToBuy.sellerId);
+            if (sellerAccount) {
+                let taxRate = MARKET_TAX_RATE;
+                if (currentGlobalEvent && currentGlobalEvent.effect.type === 'market_tax') { taxRate = currentGlobalEvent.effect.rate; }
+                const earnings = Math.round(totalCostMb * (1 - taxRate));
+                await economyCollection.updateOne({ _id: sellerAccount._id }, { $inc: { balance: earnings } });
+            }
+            const sellerName = sellerAccount ? (sellerAccount.drednotName || sellerAccount.displayName || `User ${sellerAccount._id}`) : listingToBuy.sellerName;
+            responseMessage = `You bought ${listingToBuy.quantity}x ${ITEMS[listingToBuy.itemId].name} for ${totalCostMb} ${CURRENCY_NAME} from ${sellerName}!`;
+            break;
         case 'mc': case 'marketcancel': if (args.length < 1) { responseMessage = "Usage: !marketcancel [listing_id]"; } else { const listingId = parseInt(args[0]); if(isNaN(listingId)) { responseMessage = "Listing ID must be a number."; break; } const listingToCancel = await marketCollection.findOne({ listingId: listingId }); if (!listingToCancel || listingToCancel.sellerId !== account._id) { responseMessage = "This is not your listing."; } else { await modifyInventory(account._id, listingToCancel.itemId, listingToCancel.quantity); await marketCollection.deleteOne({ _id: listingToCancel._id }); responseMessage = `Cancelled your listing for ${listingToCancel.quantity}x ${ITEMS[listingToCancel.itemId].name}.`; } } break; 
         case 'cs': result = await handleCrateShop(); if (!result.success) { responseMessage = result.lines[0]; break; } title = "The Collector's Crates"; const csPage = getPaginatedResponse(identifier, 'crateshop', result.lines, title, 0); responseMessage = csPage.game.map(line => cleanText(line)); break; 
-        case 'csb': case 'crateshopbuy': if (args.length < 2) { responseMessage = "Usage: !csb [crate name] [amount]"; break; } const amountToOpen = parseInt(args[args.length - 1]); const crateNameToOpen = args.slice(0, -1).join(' '); if (isNaN(amountToOpen) || amountToOpen <= 0) { responseMessage = "Please enter a valid amount to open."; break; } const crateId = Object.keys(LOOTBOXES).find(k => LOOTBOXES[k].name.toLowerCase() === crateNameToOpen.toLowerCase()); if (!crateId) { responseMessage = `The Collector doesn't sell a crate named "${crateNameToOpen}". Check the !cs shop.`; break; } const listing = await lootboxCollection.findOne({ lootboxId: crateId }); if (!listing) { responseMessage = `The Collector is not selling any "${crateNameToOpen}" right now.`; break; } if (listing.quantity < amountToOpen) { responseMessage = `The Collector only has ${listing.quantity} of those crates in stock.`; break; } const totalCostCrate = listing.price * amountToOpen; const preLossBalance = account.balance; if (preLossBalance < totalCostCrate) { responseMessage = `You can't afford that. It costs ${totalCostCrate} ${CURRENCY_NAME} to open ${amountToOpen}.`; break; } let crateUpdates = { $inc: { balance: -totalCostCrate } }; let totalRewards = {}; for (let i = 0; i < amountToOpen; i++) { const reward = openLootbox(listing.lootboxId); if (reward.type === 'bits') { totalRewards.bits = (totalRewards.bits || 0) + reward.amount; } else { totalRewards[reward.id] = (totalRewards[reward.id] || 0) + reward.amount; } } let rewardMessages = []; for (const rewardId in totalRewards) { if (rewardId === 'bits') { crateUpdates.$inc.balance += totalRewards[rewardId]; rewardMessages.push(`**${totalRewards[rewardId]}** ${CURRENCY_NAME}`); } else { if (!crateUpdates.$inc[`inventory.${rewardId}`]) crateUpdates.$inc[`inventory.${rewardId}`] = 0; crateUpdates.$inc[`inventory.${rewardId}`] += totalRewards[rewardId]; rewardMessages.push(`${ITEMS[rewardId].emoji} **${totalRewards[rewardId]}x** ${ITEMS[rewardId].name}`); } } const addictTraits = getActiveTraits(account, 'the_addict'); if (addictTraits.length > 0) {
-            // --- FIX START (4/4) ---
-            if (preLossBalance > 0) {
-                const lossPercent = Math.min(1, totalCostCrate / preLossBalance); // Cap loss % at 100%
-                let totalBuff = 0;
-                addictTraits.forEach(t => totalBuff += 50 * t.level);
-                const workBonus = lossPercent * totalBuff;
-                const buff = { itemId: 'the_addict_rush', expiresAt: Date.now() + 5 * 60 * 1000, effects: { work_bonus_percent: workBonus } };
-                crateUpdates.$push = { activeBuffs: buff };
+        case 'csb': case 'crateshopbuy':
+            if (args.length < 2) { responseMessage = "Usage: !csb [crate name] [amount]"; break; }
+            const amountToOpen = parseInt(args[args.length - 1]);
+            const crateNameToOpen = args.slice(0, -1).join(' ');
+            if (isNaN(amountToOpen) || amountToOpen <= 0) { responseMessage = "Please enter a valid amount to open."; break; }
+            const crateId = Object.keys(LOOTBOXES).find(k => LOOTBOXES[k].name.toLowerCase() === crateNameToOpen.toLowerCase());
+            if (!crateId) { responseMessage = `The Collector doesn't sell a crate named "${crateNameToOpen}". Check the !cs shop.`; break; }
+            const listingUpdateResult = await lootboxCollection.findOneAndUpdate(
+                { lootboxId: crateId, quantity: { $gte: amountToOpen } },
+                { $inc: { quantity: -amountToOpen } },
+                { returnDocument: 'before' }
+            );
+            if (!listingUpdateResult) { responseMessage = `The Collector doesn't have enough of that crate, or it was just purchased.`; break; }
+            const listing = listingUpdateResult;
+            const totalCostCrate = listing.price * amountToOpen;
+            const preLossBalance = account.balance;
+            if (preLossBalance < totalCostCrate) {
+                await lootboxCollection.updateOne({ _id: listing._id }, { $inc: { quantity: amountToOpen } }); // Refund
+                responseMessage = `You can't afford that. It costs ${totalCostCrate} ${CURRENCY_NAME}.`;
+                break;
             }
-            // --- FIX END (4/4) ---
-        } await economyCollection.updateOne({ _id: account._id }, crateUpdates); await lootboxCollection.updateOne({ _id: listing._id }, { $inc: { quantity: -amountToOpen } }); await lootboxCollection.deleteMany({ quantity: { $lte: 0 } }); responseMessage = `You opened ${amountToOpen}x ${LOOTBOXES[listing.lootboxId].name} and received: ${cleanText(rewardMessages).join(', ')}!`; break;
+            let crateUpdates = { $inc: { balance: -totalCostCrate } };
+            let totalRewards = {};
+            for (let i = 0; i < amountToOpen; i++) {
+                const reward = openLootbox(listing.lootboxId);
+                if (reward.type === 'bits') { totalRewards.bits = (totalRewards.bits || 0) + reward.amount; }
+                else { totalRewards[reward.id] = (totalRewards[reward.id] || 0) + reward.amount; }
+            }
+            let rewardMessages = [];
+            for (const rewardId in totalRewards) {
+                if (rewardId === 'bits') {
+                    crateUpdates.$inc.balance += totalRewards[rewardId];
+                    rewardMessages.push(`**${totalRewards[rewardId]}** ${CURRENCY_NAME}`);
+                } else {
+                    if (!crateUpdates.$inc[`inventory.${rewardId}`]) crateUpdates.$inc[`inventory.${rewardId}`] = 0;
+                    crateUpdates.$inc[`inventory.${rewardId}`] += totalRewards[rewardId];
+                    rewardMessages.push(`${ITEMS[rewardId].emoji} **${totalRewards[rewardId]}x** ${ITEMS[rewardId].name}`);
+                }
+            }
+            const addictTraits = getActiveTraits(account, 'the_addict');
+            if (addictTraits.length > 0) {
+                if (preLossBalance > 0) {
+                    const lossPercent = Math.min(1, totalCostCrate / preLossBalance);
+                    let totalBuff = 0;
+                    addictTraits.forEach(t => totalBuff += 50 * t.level);
+                    const workBonus = lossPercent * totalBuff;
+                    const buff = { itemId: 'the_addict_rush', expiresAt: Date.now() + 5 * 60 * 1000, effects: { work_bonus_percent: workBonus } };
+                    crateUpdates.$push = { activeBuffs: buff };
+                }
+            }
+            await economyCollection.updateOne({ _id: account._id }, crateUpdates);
+            await lootboxCollection.deleteMany({ quantity: { $lte: 0 } });
+            responseMessage = `You opened ${amountToOpen}x ${LOOTBOXES[listing.lootboxId].name} and received: ${cleanText(rewardMessages).join(', ')}!`;
+            break;
         default: responseMessage = `Unknown command: !${command}`;
     }
     res.json({ reply: responseMessage });
@@ -379,7 +538,7 @@ async function startServer() {
     app.listen(port, () => console.log(`API server listening on port ${port}!`));
     await client.login(process.env.DISCORD_TOKEN);
     setInterval(processVendorTicks, VENDOR_TICK_INTERVAL_MINUTES * 60 * 1000);
-    setInterval(processLootboxVendorTick, LOOTBOX_TICK_INTERVAL_MINUTES * 60 * 1000);
+    setInterval(processLootboxVendorTick, LOOTBOX_TICK_INTERVAL_MINUTES * 1000); // Note: Set to 1 second for testing, was 1 minute
     setInterval(processFinishedSmelting, 5000);
     setInterval(processGlobalEventTick, EVENT_TICK_INTERVAL_MINUTES * 60 * 1000);
 }
