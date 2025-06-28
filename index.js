@@ -538,7 +538,7 @@ async function startServer() {
     app.listen(port, () => console.log(`API server listening on port ${port}!`));
     await client.login(process.env.DISCORD_TOKEN);
     setInterval(processVendorTicks, VENDOR_TICK_INTERVAL_MINUTES * 60 * 1000);
-    setInterval(processLootboxVendorTick, LOOTBOX_TICK_INTERVAL_MINUTES * 1000); // Note: Set to 1 second for testing, was 1 minute
+    setInterval(processLootboxVendorTick, LOOTBOX_TICK_INTERVAL_MINUTES * 60 * 1000); // Note: Set to 1 second for testing, was 1 minute
     setInterval(processFinishedSmelting, 5000);
     setInterval(processGlobalEventTick, EVENT_TICK_INTERVAL_MINUTES * 60 * 1000);
 }
