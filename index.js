@@ -611,6 +611,10 @@ async function handleSlots(account, amount) {
     const now = Date.now();
     const cooldown = SLOTS_COOLDOWN_SECONDS * 1000;
     if (account.lastSlots && (now - account.lastSlots) < cooldown) return { success: false, message: `Slow down! Wait **${formatDuration((cooldown - (now - account.lastSlots))/1000)}**.` };
+    
+    if (isNaN(amount) || amount < SLOTS_MIN_BET || amount > SLOTS_MAX_BET) {
+        return { success: false, message: `Your bet must be between **${SLOTS_MIN_BET}** and **${SLOTS_MAX_BET}** ${CURRENCY_NAME}.` };
+    }
     const preLossBalance = account.balance;
     if (preLossBalance < amount) { return { success: false, message: "You don't have enough bits." }; }
     await updateAccount(account._id, { lastSlots: now });
