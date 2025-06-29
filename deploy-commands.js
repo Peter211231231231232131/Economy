@@ -19,7 +19,25 @@ const commands = [
     { name: 'gather', description: 'Gather for random resources.' },
     { name: 'inventory', description: 'Check your item inventory.', options: [{ name: 'item_name', type: 3, description: 'Optional: name of an item to inspect', required: false }] },
     { name: 'recipes', description: 'View a list of all craftable items.' },
-    { name: 'craft', description: 'Craft an item.', options: [{ name: 'item_name', type: 3, description: 'The name of the item to craft', required: true, autocomplete: true }] },
+    {
+        name: 'craft',
+        description: 'Craft an item or multiple items at once.',
+        options: [
+            {
+                name: 'item_name',
+                type: 3, // String
+                description: 'The name of the item to craft',
+                required: true,
+                autocomplete: true
+            },
+            {
+                name: 'quantity',
+                type: 4, // Integer
+                description: 'How many to craft. Defaults to 1.',
+                required: false // It's optional
+            }
+        ]
+    },
     
     // --- Streak Commands (Updated/New) ---
     { name: 'daily', description: 'Claim your daily reward and build a streak.' },
@@ -44,7 +62,7 @@ const commands = [
     { name: 'info', description: 'Get information about a specific item or trait.', options: [{ name: 'name', type: 3, description: 'The name of the item or trait to inspect', required: true, autocomplete: true }] },
     
     // --- Trait Commands ---
-    { name: 'traits', description: 'View or reroll your traits.', options: [ { name: 'view', description: 'View your currently equipped traits.', type: 1, /* Subcommand type */ }, { name: 'reroll', description: 'Use a Trait Reforger to get two new random traits.', type: 1, /* Subcommand type */ } ] },
+    { name: 'traits', description: 'View or reroll your traits.', options: [ { type: 1, name: 'view', description: 'View your currently equipped traits.' }, { type: 1, name: 'reroll', description: 'Use a Trait Reforger to get two new random traits.' } ] },
 
     // --- Crate Shop Commands ---
     { name: 'crateshop', description: "View The Collector's special crates for sale." },
@@ -76,6 +94,7 @@ const rest = new REST({ version: '10' }).setToken(token);
         console.log(`[DEPLOY] Started registering ${commands.length} application (/) commands.`);
 
         // The put method is used to fully refresh all commands in the guild with the current set
+        // For global commands, use Routes.applicationCommands(clientId)
         await rest.put(
             Routes.applicationCommands(clientId),
             { body: commands },
