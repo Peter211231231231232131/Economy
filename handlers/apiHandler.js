@@ -264,3 +264,4 @@ module.exports = {
     handleClanAccept,
     handleClanDecline,
 };
+module.exports = { handleApiCommand };
