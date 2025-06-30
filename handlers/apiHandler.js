@@ -1,8 +1,8 @@
-// /handlers/apiHandler.js
+// /handlers/apiHandler.js (Corrected Version)
 
 const commandHandlers = require('./commandHandlers');
 const clanHandlers = require('./clanHandlers');
-const { getAccount, createNewAccount, selfHealAccount, getPaginatedResponse, toBoldFont, getItemIdByName, modifyInventory, findNextAvailableListingId } = require('../utils/utilities');
+const { getAccount, createNewAccount, selfHealAccount, getPaginatedResponse, toBoldFont, getItemIdByName, modifyInventory, findNextAvailableListingId, rollNewTrait } = require('../utils/utilities');
 const { getEconomyCollection, getVerificationsCollection, getMarketCollection, getLootboxCollection } = require('../utils/database');
 const { CURRENCY_NAME, STARTING_BALANCE, DISCORD_INVITE_LINK, ITEMS, TRAITS, MARKET_TAX_RATE, LOOTBOXES } = require('../config');
 const { getCurrentGlobalEvent } = require('../utils/tickers');
@@ -21,11 +21,17 @@ async function handleApiCommand(req, res) {
             return res.status(400).json({ reply: "Invalid request body." });
         }
 
+        // --- FIX: DECLARE COLLECTIONS ONCE AT THE TOP ---
+        const economyCollection = getEconomyCollection();
+        const marketCollection = getMarketCollection();
+        const lootboxCollection = getLootboxCollection();
+        const verificationsCollection = getVerificationsCollection();
+        // --- END FIX ---
+
         const identifier = username.toLowerCase();
         let responseMessage = '';
 
         if (command === 'verify') {
-            const verificationsCollection = getVerificationsCollection();
             const code = args[0];
             const verificationData = await verificationsCollection.findOneAndDelete({ _id: code });
             if (!verificationData) {
@@ -52,7 +58,6 @@ async function handleApiCommand(req, res) {
 
         let account = await getAccount(username);
         if (!account) {
-            const economyCollection = getEconomyCollection();
             const conflictingDiscordUser = await economyCollection.findOne({ displayName: new RegExp(`^${username}$`, 'i') });
             if (conflictingDiscordUser) {
                 console.log(`[Name Bump] Drednot user "${username}" is claiming a name from Discord user ${conflictingDiscordUser._id}.`);
@@ -72,7 +77,6 @@ async function handleApiCommand(req, res) {
         };
         let result;
 
-        // --- NEW: API CLAN COMMAND ROUTER ---
         if (command === 'clan') {
             const subCommand = args[0]?.toLowerCase() || 'help';
             const clanArgs = args.slice(1);
@@ -143,7 +147,6 @@ async function handleApiCommand(req, res) {
             responseMessage = clanResult.message || (clanResult.lines ? clanResult.lines.join('\n') : 'An error occurred.');
             return res.json({ reply: cleanText(responseMessage) });
         }
-        // --- END API CLAN COMMAND ROUTER ---
 
         switch (command) {
             case 'info':
@@ -267,11 +270,10 @@ async function handleApiCommand(req, res) {
                 const itemNameMs = args.slice(0, -2).join(' '); const qtyMs = parseInt(args[args.length - 2]); const priceMs = parseFloat(args[args.length - 1]);
                 const itemIdMs = getItemIdByName(itemNameMs);
                 if (!itemIdMs || isNaN(qtyMs) || isNaN(priceMs) || qtyMs <= 0 || priceMs <= 0) { responseMessage = "Invalid format."; break; }
-                const economyCollection = getEconomyCollection();
+                
                 const msUpdateResult = await economyCollection.findOneAndUpdate({ _id: account._id, [`inventory.${itemIdMs}`]: { $gte: qtyMs } }, { $inc: { [`inventory.${itemIdMs}`]: -qtyMs } });
                 if (!msUpdateResult) { responseMessage = "You don't have enough of that item."; break; }
                 try {
-                    const marketCollection = getMarketCollection();
                     const newListingId = await findNextAvailableListingId(marketCollection);
                     const sellerName = account.drednotName || account.displayName || account._id;
                     await marketCollection.insertOne({ listingId: newListingId, sellerId: account._id, sellerName: sellerName, itemId: itemIdMs, quantity: qtyMs, price: priceMs });
@@ -286,13 +288,12 @@ async function handleApiCommand(req, res) {
                 if (args.length < 1) { responseMessage = "Usage: !marketbuy [listing_id]"; break; }
                 const listingIdMb = parseInt(args[0]);
                 if (isNaN(listingIdMb)) { responseMessage = "Listing ID must be a number."; break; }
-                const marketCollection = getMarketCollection();
+                
                 const listingToBuyMb = await marketCollection.findOneAndDelete({ listingId: listingIdMb });
                 if (!listingToBuyMb) { responseMessage = 'That listing does not exist or was just purchased.'; break; }
                 if (listingToBuyMb.sellerId === account._id) { await marketCollection.insertOne(listingToBuyMb); responseMessage = "You can't buy your own listing."; break; }
                 
                 const totalCostMb = Math.round(listingToBuyMb.quantity * listingToBuyMb.price);
-                const economyCollection = getEconomyCollection();
                 const mbPurchaseResult = await economyCollection.updateOne({ _id: account._id, balance: { $gte: totalCostMb } }, { $inc: { balance: -totalCostMb } });
                 if (mbPurchaseResult.modifiedCount === 0) {
                     await marketCollection.insertOne(listingToBuyMb); // Refund
@@ -316,7 +317,7 @@ async function handleApiCommand(req, res) {
                 if (args.length < 1) { responseMessage = "Usage: !marketcancel [listing_id]"; break; }
                 const listingIdMc = parseInt(args[0]);
                 if (isNaN(listingIdMc)) { responseMessage = "Listing ID must be a number."; break; }
-                const marketCollection = getMarketCollection();
+                
                 const listingToCancel = await marketCollection.findOneAndDelete({ listingId: listingIdMc, sellerId: account._id });
                 if (!listingToCancel) { responseMessage = "This is not your listing or it does not exist."; }
                 else {
@@ -337,12 +338,12 @@ async function handleApiCommand(req, res) {
                 if (isNaN(amountToOpen) || amountToOpen <= 0) { responseMessage = "Please enter a valid amount to open."; break; }
                 const crateId = Object.keys(LOOTBOXES).find(k => LOOTBOXES[k].name.toLowerCase() === crateNameToOpen.toLowerCase());
                 if (!crateId) { responseMessage = `The Collector doesn't sell a crate named "${crateNameToOpen}". Check the !cs shop.`; break; }
-                const lootboxCollection = getLootboxCollection();
+                
                 const listingUpdateResult = await lootboxCollection.findOneAndUpdate({ lootboxId: crateId, quantity: { $gte: amountToOpen } }, { $inc: { quantity: -amountToOpen } });
                 if (!listingUpdateResult) { responseMessage = `The Collector doesn't have enough of that crate, or it was just purchased.`; break; }
                 const listing = listingUpdateResult;
                 const totalCostCrate = listing.price * amountToOpen;
-                const economyCollection = getEconomyCollection();
+                
                 const csbPurchaseResult = await economyCollection.updateOne({ _id: account._id, balance: { $gte: totalCostCrate } }, { $inc: { balance: -totalCostCrate } });
                 if (csbPurchaseResult.modifiedCount === 0) {
                     await lootboxCollection.updateOne({ _id: listing._id }, { $inc: { quantity: amountToOpen } }); // Refund
