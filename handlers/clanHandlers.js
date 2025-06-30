@@ -146,16 +146,16 @@ async function handleClanInfo(clanCode) {
 
 async function handleClanList() {
     const clans = getClansCollection();
-    const availableClans = await clans.find({ 'members.9': { $exists: false } }).toArray(); // A trick to find arrays with less than 10 elements
+    const availableClans = await clans.find({ 'members.9': { $exists: false } }).toArray();
     if (availableClans.length === 0) {
         return { success: false, lines: ["There are currently no clans with open slots."] };
     }
 
     const shuffled = availableClans.sort(() => 0.5 - Math.random());
-    const formattedLines = shuffled.map(clan => `**${clan.tag}** [Lv ${clan.level}] \`{${clan.code}}\``);
+    // Updated format to "Clan Name [Lv #] {code}"
+    const formattedLines = shuffled.map(clan => `**${clan.name}** [Lv ${clan.level}] \`{${clan.code}}\``);
     return { success: true, lines: formattedLines };
 }
-
 async function handleClanRecruit(account, status) {
     if (!account.clanId) { return { success: false, message: "You are not in a clan." }; }
     const clan = await getClanById(account.clanId);
