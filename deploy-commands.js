@@ -38,20 +38,18 @@ const commands = [
     { name: 'crateshop', description: "View The Collector's special crates for sale." },
     { name: 'crateshopbuy', description: 'Buy and open one or more crates from The Collector.', options: [ { name: 'crate_name', type: 3, description: "The name of the crate you want to buy.", required: true, autocomplete: true }, { name: 'amount', type: 4, description: 'The number of crates you want to buy and open.', required: true } ] },
 
-    // --- NEW CLAN COMMANDS ---
+    // --- CLAN COMMANDS ---
     {
         name: 'clan',
         description: 'Manage and interact with clans.',
         options: [
-            // Subcommand Group for Management
-            { type: 1, name: 'create', description: 'Create a new clan.', options: [{ name: 'name', type: 3, description: 'The name of your clan (3-24 chars)', required: true }, { name: 'tag', type: 3, description: 'The clan tag (2-5 chars)', required: true }] },
+            { type: 1, name: 'create', description: 'Create a new clan.', options: [{ name: 'name', type: 3, description: 'The name of your clan (3-24 chars)', required: true }] },
             { type: 1, name: 'leave', description: 'Leave your current clan.' },
             { type: 1, name: 'disband', description: 'Disband your clan (Owner only).' },
             { type: 1, name: 'kick', description: 'Kick a member from your clan (Owner only).', options: [{ name: 'user', type: 6, description: 'The member to kick', required: true }] },
             { type: 1, name: 'recruit', description: 'Set your clan recruitment status (Owner only).', options: [{ name: 'status', type: 4, description: '1 for Open, 2 for Closed', required: true, choices: [{ name: 'Open (Anyone can join)', value: 1 }, { name: 'Closed (Invite/Apply only)', value: 2 }] }] },
             { type: 1, name: 'upgrade', description: 'Upgrade your clan to the next level (Owner only).' },
             { type: 1, name: 'donate', description: 'Donate Bits to your clan\'s vault.', options: [{ name: 'amount', type: 4, description: 'The amount of Bits to donate', required: true }] },
-            // Subcommand Group for Interaction
             { type: 1, name: 'info', description: 'Get detailed information about a clan.', options: [{ name: 'code', type: 3, description: 'The 5-character code of the clan', required: true }] },
             { type: 1, name: 'list', description: 'Browse clans with open slots.' },
             { type: 1, name: 'war', description: 'View the current clan war leaderboard.' },
