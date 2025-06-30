@@ -149,36 +149,36 @@ async function processClanWarTick(client) {
 
         let state = await serverStateCollection.findOne({ stateKey: "clan_war" });
 
-        // STAGE 1: VALIDATE OR INITIALIZE STATE
-        if (!state || !state.warEndTime || !(new Date(state.warEndTime).valueOf() > 0)) {
-            const reason = !state ? "No state doc" : "State doc invalid";
+        // This is a validity check. Is the date object from the DB a real, future date?
+        const isStateValid = state && state.warEndTime && (new Date(state.warEndTime).getTime() > Date.now());
+
+        if (!isStateValid) {
+            const reason = !state ? "No state doc" : "State doc invalid/expired";
             console.log(`[CLAN WAR] Initializing/Resetting war. Reason: ${reason}.`);
-            
+
+            // --- THE FOOLPROOF FIX: DELETE AND RECREATE ---
+            // 1. Delete the old, bad state document entirely.
+            await serverStateCollection.deleteOne({ stateKey: "clan_war" });
+
+            // 2. Create a brand new, clean one.
             const newEndTime = new Date(Date.now() + CLAN_WAR_DURATION_DAYS * 24 * 60 * 60 * 1000);
+            await serverStateCollection.insertOne({
+                stateKey: "clan_war",
+                warEndTime: newEndTime
+            });
+            // --- END OF FIX ---
             
-            const updateResult = await serverStateCollection.findOneAndUpdate(
-                { stateKey: "clan_war" },
-                { $set: { warEndTime: newEndTime } },
-                { upsert: true, returnDocument: 'after' }
-            );
-            
-            if (!updateResult || !updateResult.warEndTime) {
-                console.error("[CRITICAL CLAN WAR ERROR] Failed to create or retrieve a valid war state after update. Aborting tick.");
-                return;
-            }
-            
-            console.log(`[CLAN WAR] War clock started successfully. Ends at: ${new Date(updateResult.warEndTime).toISOString()}`);
-            return;
+            console.log(`[CLAN WAR] War clock started successfully. Ends at: ${newEndTime.toISOString()}`);
+            return; // Exit this tick.
         }
 
-        // STAGE 2: PROCESS THE WAR
-        const endTime = new Date(state.warEndTime);
-        if (new Date() > endTime) {
+        // Main Logic: Only runs if the state was valid from the start.
+        // This 'if' block will now be skipped until the 3 days are actually up.
+        if (new Date() > new Date(state.warEndTime)) {
             console.log("[CLAN WAR] War has ended. Processing rewards...");
             const clansCollection = getClansCollection();
             const economyCollection = getEconomyCollection();
             
-            // ... (The rest of the reward logic is the same and should be correct)
             const winningClans = await clansCollection.find({ warPoints: { $gt: 0 } }).sort({ warPoints: -1 }).limit(3).toArray();
             if (winningClans.length > 0) {
                  const eventChannel = client.channels.cache.get(EVENT_CHANNEL_ID);
@@ -205,6 +205,7 @@ async function processClanWarTick(client) {
                  }
             }
             
+            // This part will now only run after a successful 3-day war.
             await clansCollection.updateMany({}, { $set: { warPoints: 0 } });
             const newEndTimeForReset = new Date(Date.now() + CLAN_WAR_DURATION_DAYS * 24 * 60 * 60 * 1000);
             await serverStateCollection.updateOne({ stateKey: "clan_war" }, { $set: { warEndTime: newEndTimeForReset } });
