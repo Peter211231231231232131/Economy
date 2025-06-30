@@ -185,7 +185,7 @@ async function processClanWarTick(client) {
                  if (eventChannel) {
                      const winnerDescriptions = winningClans.map((c, i) => {
                          const medals = ['🏆', '🥈', '🥉'];
-                         return `${medals[i]} **[${c.tag}] ${c.name}** - ${c.warPoints.toLocaleString()} Points`;
+                         return `${medals[i]} ${c.name}** - ${c.warPoints.toLocaleString()} Points`;
                      });
                      const embed = new EmbedBuilder().setColor('#FFD700').setTitle('⚔️ Clan War Concluded! ⚔️').setDescription(`The battle has ended! Here are the final standings:\n\n${winnerDescriptions.join('\n')}`).setFooter({ text: "Rewards have been distributed to the members of the winning clans." });
                      await eventChannel.send({ embeds: [embed] }).catch(console.error);
