@@ -1,386 +1,266 @@
-// /handlers/apiHandler.js (Corrected Version)
+// /handlers/clanHandlers.js (Corrected)
 
-const commandHandlers = require('./commandHandlers');
-const clanHandlers = require('./clanHandlers');
-const { getAccount, createNewAccount, selfHealAccount, getPaginatedResponse, toBoldFont, getItemIdByName, modifyInventory, findNextAvailableListingId, rollNewTrait } = require('../utils/utilities');
-const { getEconomyCollection, getVerificationsCollection, getMarketCollection, getLootboxCollection } = require('../utils/database');
-const { CURRENCY_NAME, STARTING_BALANCE, DISCORD_INVITE_LINK, ITEMS, TRAITS, MARKET_TAX_RATE, LOOTBOXES } = require('../config');
-const { getCurrentGlobalEvent } = require('../utils/tickers');
+const { getClansCollection, getEconomyCollection } = require('../utils/database');
+const { getAccount, updateAccount, generateClanCode, formatDuration, toBoldFont } = require('../utils/utilities');
+const { CLAN_LEVELS, CLAN_MEMBER_LIMIT, CLAN_JOIN_COOLDOWN_HOURS, CURRENCY_NAME } = require('../config');
 
-const YOUR_API_KEY = 'drednot123';
+// --- HELPER FUNCTIONS ---
+async function getClan(identifier) {
+    const clans = getClansCollection();
+    return await clans.findOne({ code: identifier });
+}
 
-async function handleApiCommand(req, res) {
-    try {
-        const apiKey = req.headers['x-api-key'];
-        if (apiKey !== YOUR_API_KEY) {
-            return res.status(401).send('Error: Invalid API key');
-        }
+async function getClanById(clanId) {
+    const clans = getClansCollection();
+    return await clans.findOne({ _id: clanId });
+}
 
-        const { command, username, args } = req.body;
-        if (!command || !username) {
-            return res.status(400).json({ reply: "Invalid request body." });
-        }
+// --- CORE CLAN ACTIONS ---
 
-        // --- FIX: DECLARE COLLECTIONS ONCE AT THE TOP ---
-        const economyCollection = getEconomyCollection();
-        const marketCollection = getMarketCollection();
-        const lootboxCollection = getLootboxCollection();
-        const verificationsCollection = getVerificationsCollection();
-        // --- END FIX ---
+async function handleClanCreate(account, clanName) {
+    if (account.clanId) {
+        return { success: false, message: "You are already in a clan." };
+    }
+    if (!clanName || clanName.length < 3 || clanName.length > 24) {
+        return { success: false, message: "Clan name must be between 3 and 24 characters." };
+    }
+    const clans = getClansCollection();
+    const existingClan = await clans.findOne({ name: new RegExp(`^${clanName}$`, 'i') });
+    if (existingClan) {
+        return { success: false, message: "A clan with that name already exists." };
+    }
+    let uniqueCode;
+    let isCodeUnique = false;
+    while (!isCodeUnique) {
+        uniqueCode = generateClanCode();
+        const existingCode = await clans.findOne({ code: uniqueCode });
+        if (!existingCode) { isCodeUnique = true; }
+    }
+    const newClan = {
+        name: clanName,
+        code: uniqueCode,
+        ownerId: account._id,
+        members: [account._id],
+        level: 1,
+        vaultBalance: 0,
+        warPoints: 0,
+        recruitment: 1,
+        applicants: [],
+        pendingInvites: [],
+        createdAt: new Date(),
+    };
+    const result = await clans.insertOne(newClan);
+    await updateAccount(account._id, { clanId: result.insertedId });
+    return { success: true, message: `You have successfully founded the clan **${clanName}**! Your unique clan code is \`{${uniqueCode}}\`.` };
+}
 
-        const identifier = username.toLowerCase();
-        let responseMessage = '';
+async function handleClanLeave(account) {
+    if (!account.clanId) { return { success: false, message: "You are not in a clan." }; }
+    const clans = getClansCollection();
+    const clan = await getClanById(account.clanId);
+    if (!clan) {
+        await updateAccount(account._id, { clanId: null });
+        return { success: false, message: "The clan you were in seems to have been disbanded." };
+    }
+    if (clan.ownerId === account._id) { return { success: false, message: "You cannot leave the clan. You must use `/clan disband`." }; }
+    await clans.updateOne({ _id: clan._id }, { $pull: { members: account._id } });
+    const cooldownTime = new Date(Date.now() + CLAN_JOIN_COOLDOWN_HOURS * 60 * 60 * 1000);
+    await updateAccount(account._id, { clanId: null, clanJoinCooldown: cooldownTime });
+    return { success: true, message: `You have left **${clan.name}**. You cannot join another clan for **${CLAN_JOIN_COOLDOWN_HOURS} hour**.` };
+}
 
-        if (command === 'verify') {
-            const code = args[0];
-            const verificationData = await verificationsCollection.findOneAndDelete({ _id: code });
-            if (!verificationData) {
-                responseMessage = 'That verification code is invalid, expired, or has already been used.';
-            } else if (Date.now() - verificationData.timestamp > 5 * 60 * 1000) {
-                responseMessage = 'That verification code has expired.';
-            } else if (verificationData.drednotName.toLowerCase() !== username.toLowerCase()) {
-                responseMessage = 'This verification code is for a different Drednot user and has now been invalidated.';
-            } else {
-                const mergeResult = await commandHandlers.handleAccountMerge(verificationData.discordId, verificationData.drednotName);
-                responseMessage = mergeResult.message;
-            }
-            return res.json({ reply: responseMessage });
-        }
+async function handleClanKick(account, targetAccount) {
+    if (!account.clanId) { return { success: false, message: "You are not in a clan." }; }
+    const clan = await getClanById(account.clanId);
+    if (!clan) { return { success: false, message: "You are not in a valid clan." }; }
+    if (clan.ownerId !== account._id) { return { success: false, message: "Only the clan owner can kick members." }; }
+    if (targetAccount.clanId?.toString() !== clan._id.toString()) { return { success: false, message: `**${targetAccount.drednotName || targetAccount.displayName}** is not in your clan.` }; }
+    if (targetAccount._id === account._id) { return { success: false, message: "You cannot kick yourself." }; }
+    const clans = getClansCollection();
+    await clans.updateOne({ _id: clan._id }, { $pull: { members: targetAccount._id } });
+    const cooldownTime = new Date(Date.now() + CLAN_JOIN_COOLDOWN_HOURS * 60 * 60 * 1000);
+    await updateAccount(targetAccount._id, { clanId: null, clanJoinCooldown: cooldownTime });
+    return { success: true, message: `You have kicked **${targetAccount.drednotName || targetAccount.displayName}** from the clan.` };
+}
 
-        const { userPaginationData } = require('../utils/utilities');
-        if (['n', 'next', 'p', 'previous'].includes(command)) {
-            const session = userPaginationData[identifier];
-            if (!session) return res.json({ reply: 'You have no active list to navigate.' });
-            const pageChange = (command.startsWith('n')) ? 1 : -1;
-            const { game } = getPaginatedResponse(identifier, session.type, session.lines, session.title, pageChange);
-            return res.json({ reply: game.map(line => cleanText(line)) });
-        }
+async function handleClanDisband(account) {
+    if (!account.clanId) { return { success: false, message: "You are not in a clan." }; }
+    const clan = await getClanById(account.clanId);
+    if (!clan) { return { success: false, message: "You are not in a valid clan." }; }
+    if (clan.ownerId !== account._id) { return { success: false, message: "Only the clan owner can disband the clan." }; }
+    await getEconomyCollection().updateMany({ clanId: clan._id }, { $set: { clanId: null } });
+    await getClansCollection().deleteOne({ _id: clan._id });
+    return { success: true, message: `You have disbanded **${clan.name}**.` };
+}
 
-        let account = await getAccount(username);
-        if (!account) {
-            const conflictingDiscordUser = await economyCollection.findOne({ displayName: new RegExp(`^${username}$`, 'i') });
-            if (conflictingDiscordUser) {
-                console.log(`[Name Bump] Drednot user "${username}" is claiming a name from Discord user ${conflictingDiscordUser._id}.`);
-                await economyCollection.updateOne({ _id: conflictingDiscordUser._id }, { $set: { displayName: null, wasBumped: true } });
-            }
-            account = await createNewAccount(username, 'drednot');
-            const welcomeMessage = [`Welcome! Your new economy account "${username}" has been created with ${STARTING_BALANCE} Bits and two random traits.`, `Join the Discord for the full experience:`, `${DISCORD_INVITE_LINK}`];
-            return res.json({ reply: welcomeMessage });
-        } else {
-            account = await selfHealAccount(account);
-        }
+async function handleClanInfo(clanCode) {
+    const clan = await getClan(clanCode);
+    if (!clan) { return { success: false, message: "No clan found with that code." }; }
+    const ownerAccount = await getAccount(clan.ownerId);
+    const ownerName = ownerAccount?.drednotName || ownerAccount?.displayName || 'Unknown';
+    const nextLevelInfo = CLAN_LEVELS.find(l => l.level === clan.level + 1);
+    const progressText = nextLevelInfo ? `Vault: ${clan.vaultBalance.toLocaleString()} / ${nextLevelInfo.cost.toLocaleString()} to Level ${nextLevelInfo.level}` : 'Max Level Reached';
+    const status = clan.recruitment === 1 ? 'Open' : 'Closed';
+    const economyCollection = getEconomyCollection();
+    if (!economyCollection) { return { success: false, message: "Database connection is not ready." }; }
+    const memberAccounts = await economyCollection.find({ _id: { $in: clan.members } }).toArray();
+    const memberNames = memberAccounts.map(m => m.drednotName || m.displayName || 'Unnamed Member').join(', ');
+    const info = [
+        `**${clan.name}** [Lv ${clan.level}]`,
+        `> **Code:** \`{${clan.code}}\``,
+        `> **Leader:** ${ownerName}`,
+        `> **Recruitment:** ${status}`,
+        `> **Members:** ${clan.members.length}/${CLAN_MEMBER_LIMIT}`,
+        `> **Progress:** ${progressText}`,
+        `> **Members:** ${memberNames}`
+    ];
+    return { success: true, message: info.join('\n') };
+}
 
-        const cleanText = (text) => {
-            let processedText = Array.isArray(text) ? text.map(t => String(t)).join('\n') : String(text);
-            processedText = processedText.replace(/\*\*([^*]+)\*\*/g, (match, p1) => toBoldFont(p1));
-            return processedText.replace(/`|>/g, '').replace(/<a?:.+?:\d+>/g, '').replace(/<:[a-zA-Z0-9_]+:[0-9]+>/g, '');
-        };
-        let result;
+async function handleClanList() {
+    const clans = getClansCollection();
+    const availableClans = await clans.find({ [`members.${CLAN_MEMBER_LIMIT - 1}`]: { $exists: false } }).toArray();
+    if (availableClans.length === 0) { return { success: false, lines: ["There are currently no clans with open slots."] }; }
+    const shuffled = availableClans.sort(() => 0.5 - Math.random());
+    const formattedLines = shuffled.map(clan => `**${clan.name}** [Lv ${clan.level}] \`{${clan.code}}\``);
+    return { success: true, lines: formattedLines };
+}
 
-        if (command === 'clan') {
-            const subCommand = args[0]?.toLowerCase() || 'help';
-            const clanArgs = args.slice(1);
-            let clanResult;
+async function handleClanRecruit(account, status) {
+    if (!account.clanId) { return { success: false, message: "You are not in a clan." }; }
+    const clan = await getClanById(account.clanId);
+    if (!clan) { return { success: false, message: "You are not in a valid clan." }; }
+    if (clan.ownerId !== account._id) { return { success: false, message: "Only the clan owner can change the recruitment status." }; }
+    const newStatus = parseInt(status, 10);
+    if (newStatus !== 1 && newStatus !== 2) { return { success: false, message: "Invalid status. Use 1 for Open or 2 for Closed." }; }
+    await getClansCollection().updateOne({ _id: clan._id }, { $set: { recruitment: newStatus } });
+    const statusText = newStatus === 1 ? 'OPEN' : 'CLOSED';
+    return { success: true, message: `Your clan's recruitment status has been set to **${statusText}**.` };
+}
 
-            switch (subCommand) {
-                case 'create':
-                    if (clanArgs.length < 1) { clanResult = { message: "Usage: !clan create <name>" }; break; }
-                    const clanNameOnly = clanArgs.join(' ');
-                    clanResult = await clanHandlers.handleClanCreate(account, clanNameOnly);
-                    break;
-                case 'leave': clanResult = await clanHandlers.handleClanLeave(account); break;
-                case 'disband': clanResult = await clanHandlers.handleClanDisband(account); break;
-                case 'kick':
-                    if (!clanArgs[0]) { clanResult = { message: "Usage: !clan kick <username>" }; break; }
-                    const targetAccKick = await getAccount(clanArgs.join(' '));
-                    if (!targetAccKick) clanResult = { message: "Player not found." };
-                    else clanResult = await clanHandlers.handleClanKick(account, targetAccKick);
-                    break;
-                case 'recruit':
-                    if (!clanArgs[0]) { clanResult = { message: "Usage: !clan recruit <1 for Open|2 for Closed>" }; break; }
-                    clanResult = await clanHandlers.handleClanRecruit(account, clanArgs[0]);
-                    break;
-                case 'upgrade': clanResult = await clanHandlers.handleClanUpgrade(account); break;
-                case 'donate':
-                    const amount = parseInt(clanArgs[0], 10);
-                    clanResult = await clanHandlers.handleClanDonate(account, amount);
-                    break;
-                case 'info':
-                    if (!clanArgs[0]) { clanResult = { message: "Usage: !clan info <code>" }; break; }
-                    clanResult = await clanHandlers.handleClanInfo(clanArgs[0]);
-                    break;
-                case 'list':
-                    clanResult = await clanHandlers.handleClanList();
-                    if (clanResult.success) {
-                        const paginated = getPaginatedResponse(identifier, 'clan_list', clanResult.lines, 'Clan Browser', 0);
-                        return res.json({ reply: paginated.game.map(line => cleanText(line)) });
-                    }
-                    break;
-                case 'war':
-                    clanResult = await commandHandlers.handleClanWar();
-                    break;
-                case 'join':
-                    if (!clanArgs[0]) { clanResult = { message: "Usage: !clan join <code>" }; break; }
-                    clanResult = await clanHandlers.handleClanJoin(account, clanArgs[0]);
-                    break;
-                case 'invite':
-                    const targetName = clanArgs.join(' ');
-                    if (targetName) {
-                        const targetAccInv = await getAccount(targetName);
-                        if (!targetAccInv) clanResult = { message: "Player not found." };
-                        else clanResult = await clanHandlers.handleClanInvite(account, targetAccInv);
-                    } else {
-                        clanResult = await clanHandlers.handleClanInvite(account, account.clanId ? 'view' : null);
-                    }
-                    break;
-                case 'accept':
-                    if (!clanArgs[0]) { clanResult = { message: "Usage: !clan accept <username_or_code>" }; break; }
-                    clanResult = await clanHandlers.handleClanAccept(account, clanArgs[0]);
-                    break;
-                case 'decline':
-                    if (!clanArgs[0]) { clanResult = { message: "Usage: !clan decline <code>" }; break; }
-                    clanResult = await clanHandlers.handleClanDecline(account, clanArgs[0]);
-                    break;
-                default:
-                     clanResult = { message: `Unknown clan command. Use !clan list, !clan info, etc.` };
-            }
-            responseMessage = clanResult.message || (clanResult.lines ? clanResult.lines.join('\n') : 'An error occurred.');
-            return res.json({ reply: cleanText(responseMessage) });
-        }
+async function handleClanDonate(account, amount) {
+    if (!account.clanId) { return { success: false, message: "You are not in a clan." }; }
+    if (isNaN(amount) || amount <= 0) { return { success: false, message: "Please provide a valid, positive amount to donate." }; }
+    if (account.balance < amount) { return { success: false, message: "You do not have enough Bits to donate." }; }
+    const updateResult = await getEconomyCollection().updateOne({ _id: account._id, balance: { $gte: amount } }, { $inc: { balance: -amount } });
+    if (updateResult.modifiedCount === 0) { return { success: false, message: "Failed to donate. You may not have enough Bits." }; }
+    await getClansCollection().updateOne({ _id: account.clanId }, { $inc: { vaultBalance: amount } });
+    return { success: true, message: `You have successfully donated **${amount.toLocaleString()} ${CURRENCY_NAME}** to the clan vault!` };
+}
 
-        switch (command) {
-            case 'info':
-                if (args.length === 0) { responseMessage = "Usage: !info <item/trait name>"; break; }
-                const name = args.join(' ');
-                const itemId = getItemIdByName(name);
-                const traitId = Object.keys(TRAITS).find(k => TRAITS[k].name.toLowerCase() === name.toLowerCase());
-                if (itemId) { responseMessage = cleanText(commandHandlers.handleItemInfo(itemId)); } 
-                else if (traitId) {
-                    const trait = TRAITS[traitId];
-                    let effectText = '';
-                    switch (traitId) { case 'scavenger': effectText = `Grants a 5% chance per level to find bonus resources from /work.`; break; case 'prodigy': effectText = `Reduces /work and /gather cooldowns by 5% per level.`; break; case 'wealth': effectText = `Increases Bits earned from /work by 5% per level.`; break; case 'surveyor': effectText = `Grants a 2% chance per level to double your entire haul from /gather.`; break; case 'collector': effectText = `Increases the bonus reward for first-time crafts by 20% per level.`; break; case 'the_addict': effectText = `After losing a gamble, boosts your next /work by a % based on wealth lost, multiplied by 50% per level.`; break; case 'zealot': effectText = `Each 'Zeal' stack boosts rewards by 2.5% per level. Stacks decay after 10 minutes.`; break; default: effectText = trait.description.replace(/{.*?}/g, '...'); }
-                    responseMessage = [`Trait: ${trait.name} (${trait.rarity})`, effectText, `Max Level: ${trait.maxLevel}`].join('\n');
-                } else { responseMessage = `Could not find an item or trait named "${name}".`; }
-                break;
-            case 'traits':
-                let traitMessage = `Your Traits:\n`;
-                if (account.traits && account.traits.slots) {
-                    for (const trait of account.traits.slots) { const t = TRAITS[trait.name]; traitMessage += `> ${t.name} (Level ${trait.level}) - ${t.rarity}\n`; }
-                } else { traitMessage = "You have no traits yet."; }
-                responseMessage = cleanText(traitMessage);
-                break;
-            case 'traitroll':
-                if ((account.inventory['trait_reforger'] || 0) < 1) { responseMessage = `You need a Trait Reforger to do this.`; }
-                else {
-                    await modifyInventory(username, 'trait_reforger', -1);
-                    const newTraits = [rollNewTrait(), rollNewTrait()];
-                    await updateAccount(account._id, { 'traits.slots': newTraits });
-                    let rollMessage = `You consumed a Trait Reforger and received:\n`;
-                    for (const trait of newTraits) { const t = TRAITS[trait.name]; rollMessage += `> ${t.name} (Level ${trait.level}) - ${t.rarity}\n`; }
-                    responseMessage = cleanText(rollMessage);
-                }
-                break;
-            case 'eat':
-                if (args.length === 0) { responseMessage = "Usage: !eat <food name>"; break; }
-                const foodName = args.join(' ');
-                result = await commandHandlers.handleEat(account, foodName);
-                responseMessage = cleanText(result.message);
-                break;
-            case 'm': case 'market':
-                const marketFilter = args.length > 0 ? args.join(' ') : null;
-                result = await commandHandlers.handleMarket(marketFilter);
-                if (!result.success) { responseMessage = result.lines[0]; break; }
-                const marketPage = getPaginatedResponse(identifier, 'market', result.lines, marketFilter ? `Market (Filter: ${marketFilter})` : "Market", 0);
-                responseMessage = marketPage.game.map(line => cleanText(line));
-                break;
-            case 'lb': case 'leaderboard':
-                result = await commandHandlers.handleLeaderboard();
-                if (!result.success) { responseMessage = result.lines[0]; break; }
-                const lbPage = getPaginatedResponse(identifier, 'leaderboard', result.lines, "Leaderboard", 0);
-                responseMessage = lbPage.game.map(line => cleanText(line));
-                break;
-            case 'recipes':
-                const recipeLines = (await commandHandlers.handleRecipes()).split('\n');
-                const recipeTitle = recipeLines.shift();
-                result = getPaginatedResponse(identifier, 'recipes', recipeLines, recipeTitle, 0);
-                responseMessage = result.game.map(line => cleanText(line));
-                break;
-            case 'bal': case 'balance':
-                responseMessage = `Your balance is: **${Math.floor(account.balance)}** ${CURRENCY_NAME}.`;
-                break;
-            case 'work': result = await commandHandlers.handleWork(account); responseMessage = result.message; break;
-            case 'gather': result = await commandHandlers.handleGather(account); responseMessage = result.message; break;
-            case 'daily': result = await commandHandlers.handleDaily(account); responseMessage = result.message; break;
-            case 'hourly': result = await commandHandlers.handleHourly(account); responseMessage = result.message; break;
-            case 'inv': case 'inventory':
-                const invFilter = args.length > 0 ? args.join(' ') : null;
-                responseMessage = cleanText(commandHandlers.handleInventory(account, invFilter));
-                break;
-            case 'craft': {
-                if (args.length === 0) { responseMessage = "Usage: !craft <item name> [quantity]"; break; }
-                let quantity = 1; let itemName;
-                const lastArg = args[args.length - 1];
-                if (!isNaN(parseInt(lastArg)) && parseInt(lastArg) > 0) {
-                    quantity = parseInt(lastArg);
-                    itemName = args.slice(0, -1).join(' ');
-                } else {
-                    itemName = args.join(' ');
-                }
-                let craftResult = await commandHandlers.handleCraft(account, itemName, quantity);
-                responseMessage = craftResult.message.replace('`/recipes`', '`!recipes`');
-                break;
-            }
-            case 'flip':
-                if (args.length < 2) { responseMessage = "Usage: !flip <amount> <h/t>"; break; }
-                const flipAmount = parseInt(args[0]);
-                if (isNaN(flipAmount) || flipAmount <= 0) { responseMessage = "Please enter a valid, positive amount."; break; }
-                result = await commandHandlers.handleFlip(account, flipAmount, args[1].toLowerCase());
-                responseMessage = result.message;
-                break;
-            case 'slots':
-                if (args.length < 1) { responseMessage = "Usage: !slots <amount>"; break; }
-                const slotsAmount = parseInt(args[0]);
-                if (isNaN(slotsAmount) || slotsAmount <= 0) { responseMessage = "Please enter a valid, positive amount."; break; }
-                result = await commandHandlers.handleSlots(account, slotsAmount);
-                responseMessage = result.message;
-                break;
-            case 'timers':
-                result = await commandHandlers.handleTimers(account);
-                responseMessage = [`--- ${toBoldFont('Your Cooldowns')} ---`, ...result];
-                break;
-            case 'smelt':
-                if (args.length < 1) { responseMessage = "Usage: !smelt <item name> [quantity]"; break; }
-                const quantitySmelt = args.length > 1 && !isNaN(parseInt(args[args.length - 1])) ? parseInt(args.pop()) : 1;
-                const itemNameSmelt = args.join(' ');
-                result = await commandHandlers.handleSmelt(account, itemNameSmelt, quantitySmelt);
-                responseMessage = result.message;
-                break;
-            case 'pay':
-                if (args.length < 2) { responseMessage = "Usage: !pay <username> <amount>"; break; }
-                const amountToPay = parseInt(args[args.length - 1]);
-                if (!isFinite(account.balance)) { responseMessage = 'Your account balance is corrupted.'; break; }
-                if (isNaN(amountToPay) || amountToPay <= 0) { responseMessage = "Please enter a valid, positive amount."; break; }
-                const recipientName = args.slice(0, -1).join(' ');
-                const recipientAccount = await getAccount(recipientName);
-                if (!recipientAccount) { responseMessage = `Could not find a player named "${recipientName}".`; }
-                else { result = await commandHandlers.handlePay(account, recipientAccount, amountToPay); responseMessage = result.message; }
-                break;
-            case 'ms': case 'marketsell':
-                if (args.length < 3) { responseMessage = "Usage: !marketsell [item] [qty] [price]"; break; }
-                const itemNameMs = args.slice(0, -2).join(' '); const qtyMs = parseInt(args[args.length - 2]); const priceMs = parseFloat(args[args.length - 1]);
-                const itemIdMs = getItemIdByName(itemNameMs);
-                if (!itemIdMs || isNaN(qtyMs) || isNaN(priceMs) || qtyMs <= 0 || priceMs <= 0) { responseMessage = "Invalid format."; break; }
-                
-                const msUpdateResult = await economyCollection.findOneAndUpdate({ _id: account._id, [`inventory.${itemIdMs}`]: { $gte: qtyMs } }, { $inc: { [`inventory.${itemIdMs}`]: -qtyMs } });
-                if (!msUpdateResult) { responseMessage = "You don't have enough of that item."; break; }
-                try {
-                    const newListingId = await findNextAvailableListingId(marketCollection);
-                    const sellerName = account.drednotName || account.displayName || account._id;
-                    await marketCollection.insertOne({ listingId: newListingId, sellerId: account._id, sellerName: sellerName, itemId: itemIdMs, quantity: qtyMs, price: priceMs });
-                    responseMessage = `Listed ${qtyMs}x ${ITEMS[itemIdMs].name}. ID: **${newListingId}**`;
-                } catch (error) {
-                    await modifyInventory(account._id, itemIdMs, qtyMs);
-                    console.error("Failed to list item via in-game command:", error);
-                    responseMessage = "An unexpected error occurred. Items returned.";
-                }
-                break;
-            case 'mb': case 'marketbuy':
-                if (args.length < 1) { responseMessage = "Usage: !marketbuy [listing_id]"; break; }
-                const listingIdMb = parseInt(args[0]);
-                if (isNaN(listingIdMb)) { responseMessage = "Listing ID must be a number."; break; }
-                
-                const listingToBuyMb = await marketCollection.findOneAndDelete({ listingId: listingIdMb });
-                if (!listingToBuyMb) { responseMessage = 'That listing does not exist or was just purchased.'; break; }
-                if (listingToBuyMb.sellerId === account._id) { await marketCollection.insertOne(listingToBuyMb); responseMessage = "You can't buy your own listing."; break; }
-                
-                const totalCostMb = Math.round(listingToBuyMb.quantity * listingToBuyMb.price);
-                const mbPurchaseResult = await economyCollection.updateOne({ _id: account._id, balance: { $gte: totalCostMb } }, { $inc: { balance: -totalCostMb } });
-                if (mbPurchaseResult.modifiedCount === 0) {
-                    await marketCollection.insertOne(listingToBuyMb); // Refund
-                    responseMessage = "You can't afford this.";
-                    break;
-                }
+async function handleClanUpgrade(account) {
+    if (!account.clanId) { return { success: false, message: "You are not in a clan." }; }
+    const clan = await getClanById(account.clanId);
+    if (!clan) { return { success: false, message: "You are not in a valid clan." }; }
+    if (clan.ownerId !== account._id) { return { success: false, message: "Only the clan owner can upgrade the clan." }; }
+    const nextLevel = clan.level + 1;
+    const upgradeInfo = CLAN_LEVELS.find(l => l.level === nextLevel);
+    if (!upgradeInfo) { return { success: false, message: "Your clan is already at the maximum level." }; }
+    if (clan.vaultBalance < upgradeInfo.cost) { return { success: false, message: `Your clan vault does not have enough Bits. You need **${(upgradeInfo.cost - clan.vaultBalance).toLocaleString()}** more.` }; }
+    await getClansCollection().updateOne({ _id: clan._id }, { $inc: { level: 1, vaultBalance: -upgradeInfo.cost } });
+    return { success: true, message: `**Congratulations!** Your clan has reached **Level ${nextLevel}**!\n> **New Perk:** ${upgradeInfo.perks}` };
+}
 
-                await modifyInventory(account._id, listingToBuyMb.itemId, listingToBuyMb.quantity);
-                const sellerAccountMb = await getAccount(listingToBuyMb.sellerId);
-                if (sellerAccountMb) {
-                    const currentGlobalEvent = getCurrentGlobalEvent();
-                    let taxRate = MARKET_TAX_RATE;
-                    if (currentGlobalEvent && currentGlobalEvent.effect.type === 'market_tax') { taxRate = currentGlobalEvent.effect.rate; }
-                    const earnings = Math.round(totalCostMb * (1 - taxRate));
-                    await economyCollection.updateOne({ _id: sellerAccountMb._id }, { $inc: { balance: earnings } });
-                }
-                const sellerNameMb = sellerAccountMb ? (sellerAccountMb.drednotName || sellerAccountMb.displayName || `User ${sellerAccountMb._id}`) : listingToBuyMb.sellerName;
-                responseMessage = `You bought **${listingToBuyMb.quantity}x** ${ITEMS[listingToBuyMb.itemId].name} for **${totalCostMb}** ${CURRENCY_NAME} from ${sellerNameMb}!`;
-                break;
-            case 'mc': case 'marketcancel':
-                if (args.length < 1) { responseMessage = "Usage: !marketcancel [listing_id]"; break; }
-                const listingIdMc = parseInt(args[0]);
-                if (isNaN(listingIdMc)) { responseMessage = "Listing ID must be a number."; break; }
-                
-                const listingToCancel = await marketCollection.findOneAndDelete({ listingId: listingIdMc, sellerId: account._id });
-                if (!listingToCancel) { responseMessage = "This is not your listing or it does not exist."; }
-                else {
-                    await modifyInventory(account._id, listingToCancel.itemId, listingToCancel.quantity);
-                    responseMessage = `Cancelled your listing for **${listingToCancel.quantity}x** ${ITEMS[listingToCancel.itemId].name}.`;
-                }
-                break;
-            case 'cs':
-                result = await commandHandlers.handleCrateShop();
-                if (!result.success) { responseMessage = result.lines[0]; break; }
-                const csPage = getPaginatedResponse(identifier, 'crateshop', result.lines, "The Collector's Crates", 0);
-                responseMessage = csPage.game.map(line => cleanText(line));
-                break;
-            case 'csb': case 'crateshopbuy':
-                if (args.length < 2) { responseMessage = "Usage: !csb [crate name] [amount]"; break; }
-                const amountToOpen = parseInt(args[args.length - 1]);
-                const crateNameToOpen = args.slice(0, -1).join(' ');
-                if (isNaN(amountToOpen) || amountToOpen <= 0) { responseMessage = "Please enter a valid amount to open."; break; }
-                const crateId = Object.keys(LOOTBOXES).find(k => LOOTBOXES[k].name.toLowerCase() === crateNameToOpen.toLowerCase());
-                if (!crateId) { responseMessage = `The Collector doesn't sell a crate named "${crateNameToOpen}". Check the !cs shop.`; break; }
-                
-                const listingUpdateResult = await lootboxCollection.findOneAndUpdate({ lootboxId: crateId, quantity: { $gte: amountToOpen } }, { $inc: { quantity: -amountToOpen } });
-                if (!listingUpdateResult) { responseMessage = `The Collector doesn't have enough of that crate, or it was just purchased.`; break; }
-                const listing = listingUpdateResult;
-                const totalCostCrate = listing.price * amountToOpen;
-                
-                const csbPurchaseResult = await economyCollection.updateOne({ _id: account._id, balance: { $gte: totalCostCrate } }, { $inc: { balance: -totalCostCrate } });
-                if (csbPurchaseResult.modifiedCount === 0) {
-                    await lootboxCollection.updateOne({ _id: listing._id }, { $inc: { quantity: amountToOpen } }); // Refund
-                    responseMessage = `You can't afford that. It costs **${totalCostCrate}** ${CURRENCY_NAME}.`;
-                    break;
-                }
-                const { openLootbox } = require('../utils/utilities');
-                let crateUpdates = { $inc: {} };
-                let totalRewards = {};
-                for (let i = 0; i < amountToOpen; i++) {
-                    const reward = openLootbox(listing.lootboxId);
-                    if (reward.type === 'bits') { totalRewards.bits = (totalRewards.bits || 0) + reward.amount; }
-                    else { totalRewards[reward.id] = (totalRewards[reward.id] || 0) + reward.amount; }
-                }
-                let rewardMessages = [];
-                for (const rewardId in totalRewards) {
-                    if (rewardId === 'bits') {
-                        crateUpdates.$inc.balance = (crateUpdates.$inc.balance || 0) + totalRewards[rewardId];
-                        rewardMessages.push(`**${totalRewards[rewardId]}** ${CURRENCY_NAME}`);
-                    } else {
-                        crateUpdates.$inc[`inventory.${rewardId}`] = (crateUpdates.$inc[`inventory.${rewardId}`] || 0) + totalRewards[rewardId];
-                        rewardMessages.push(`${ITEMS[rewardId].emoji} **${totalRewards[rewardId]}x** ${ITEMS[rewardId].name}`);
-                    }
-                }
-                await economyCollection.updateOne({ _id: account._id }, crateUpdates);
-                await lootboxCollection.deleteMany({ quantity: { $lte: 0 } });
-                responseMessage = `You opened **${amountToOpen}x** ${LOOTBOXES[listing.lootboxId].name} and received: ${rewardMessages.join(', ')}!`;
-                break;
-            default:
-                responseMessage = `Unknown command: !${command}`;
-        }
-
-        res.json({ reply: cleanText(responseMessage) });
-    } catch (error) {
-        console.error(`[API-ERROR] An error occurred while processing command "${req.body.command}" for user "${req.body.username}":`, error);
-        res.status(500).json({ reply: "An internal server error occurred." });
+async function handleClanJoin(account, clanCode) {
+    if (account.clanId) { return { success: false, message: "You are already in a clan." }; }
+    if (account.clanJoinCooldown && new Date() < account.clanJoinCooldown) {
+        const remaining = formatDuration((account.clanJoinCooldown.getTime() - Date.now()) / 1000);
+        return { success: false, message: `You cannot join a new clan yet. Please wait **${remaining}**.` };
+    }
+    const clan = await getClan(clanCode);
+    if (!clan) { return { success: false, message: "No clan found with that code." }; }
+    if (clan.members.length >= CLAN_MEMBER_LIMIT) { return { success: false, message: "That clan is full." }; }
+    const clans = getClansCollection();
+    if (clan.recruitment === 1) {
+        await clans.updateOne({ _id: clan._id }, { $push: { members: account._id } });
+        await updateAccount(account._id, { clanId: clan._id });
+        return { success: true, message: `You have joined **${clan.name}**!` };
+    } else {
+        if(clan.applicants.includes(account._id)) { return { success: false, message: "You have already applied to this clan." } }
+        await clans.updateOne({ _id: clan._id }, { $push: { applicants: account._id } });
+        return { success: true, message: `You have applied to join **${clan.name}**. The owner has been notified.` };
     }
 }
 
-module.exports = { handleApiCommand };
+async function handleClanInvite(account, targetAccount) {
+    const clans = getClansCollection();
+    if (!targetAccount) {
+        if (account.clanId) { return { success: false, message: "You are already in a clan." }; }
+        const invitedClans = await clans.find({ pendingInvites: account._id }).toArray();
+        if (invitedClans.length === 0) { return { success: false, message: "You have no pending clan invitations." }; }
+        const inviteList = invitedClans.map(c => `- **${c.name}** [Lv ${c.level}] \`{${c.code}}\``);
+        return { success: true, message: `You have pending invitations from:\n${inviteList.join('\n')}\nUse \`/clan accept <code>\` to join.` };
+    }
+    if (!account.clanId) { return { success: false, message: "You must be in a clan to invite players." }; }
+    const clan = await getClanById(account.clanId);
+    if (!clan) { return { success: false, message: "You are not in a valid clan." }; }
+    if (clan.ownerId !== account._id) { return { success: false, message: "Only the clan owner can manage invitations." }; }
+    if(targetAccount === 'view') {
+        if (clan.applicants.length === 0) { return { success: false, message: "Your clan has no pending applications." }; }
+        const applicantAccounts = await getEconomyCollection().find({ _id: { $in: clan.applicants } }).toArray();
+        const applicantNames = applicantAccounts.map(a => a.drednotName || a.displayName || 'Unknown User');
+        return { success: true, message: `**Applicants:** ${applicantNames.join(', ')}\nUse \`/clan accept <username>\` to approve.` };
+    }
+    if (clan.members.length >= CLAN_MEMBER_LIMIT) { return { success: false, message: "Your clan is full." }; }
+    if (targetAccount.clanId) { return { success: false, message: `**${targetAccount.drednotName || targetAccount.displayName}** is already in a clan.` }; }
+    if(clan.pendingInvites.includes(targetAccount._id)) { return { success: false, message: "You have already invited that player." } }
+    await clans.updateOne({ _id: clan._id }, { $push: { pendingInvites: targetAccount._id } });
+    return { success: true, message: `An invitation has been sent to **${targetAccount.drednotName || targetAccount.displayName}**.` };
+}
+
+async function handleClanAccept(account, identifier) {
+    const clans = getClansCollection();
+    if (identifier.length === 5) {
+        if (account.clanId) { return { success: false, message: "You are already in a clan." }; }
+        const clan = await getClan(identifier);
+        if (!clan) { return { success: false, message: "Invalid clan code." }; }
+        if (!clan.pendingInvites.includes(account._id)) { return { success: false, message: "You have not been invited to this clan." }; }
+        if (clan.members.length >= CLAN_MEMBER_LIMIT) { return { success: false, message: "That clan is now full." }; }
+        await clans.updateMany({}, { $pull: { pendingInvites: account._id, applicants: account._id } });
+        await clans.updateOne({ _id: clan._id }, { $push: { members: account._id } });
+        await updateAccount(account._id, { clanId: clan._id });
+        return { success: true, message: `You have accepted the invitation and joined **${clan.name}**!` };
+    }
+    const clan = await getClanById(account.clanId);
+    const targetAccount = await getAccount(identifier);
+    if (!clan) { return { success: false, message: "You are not in a clan." }; }
+    if (clan.ownerId !== account._id) { return { success: false, message: "Only the clan owner can accept applications." }; }
+    if (!targetAccount) { return { success: false, message: `Could not find a player named "${identifier}".` }; }
+    if (!clan.applicants.includes(targetAccount._id)) { return { success: false, message: `That player has not applied to your clan.` }; }
+    if (clan.members.length >= CLAN_MEMBER_LIMIT) { return { success: false, message: "Your clan is full." }; }
+    await clans.updateMany({}, { $pull: { pendingInvites: targetAccount._id, applicants: targetAccount._id } });
+    await clans.updateOne({ _id: clan._id }, { $push: { members: targetAccount._id } });
+    await updateAccount(targetAccount._id, { clanId: clan._id });
+    return { success: true, message: `You have accepted **${targetAccount.drednotName || targetAccount.displayName}** into the clan!` };
+}
+
+async function handleClanDecline(account, clanCode) {
+    if (account.clanId) { return { success: false, message: "This command is for players who are not in a clan." }; }
+    const clan = await getClan(clanCode);
+    if (!clan) { return { success: false, message: "Invalid clan code." }; }
+    const clans = getClansCollection();
+    const updateResult = await clans.updateOne({ _id: clan._id }, { $pull: { pendingInvites: account._id, applicants: account._id } });
+    if (updateResult.modifiedCount > 0) {
+        return { success: true, message: `You have declined the invitation/application for **${clan.name}**.` };
+    } else {
+        return { success: false, message: `You do not have a pending invitation or application for **${clan.name}**.` };
+    }
+}
+
+module.exports = {
+    getClan,
+    getClanById,
+    handleClanCreate,
+    handleClanLeave,
+    handleClanKick,
+    handleClanDisband,
+    handleClanInfo,
+    handleClanList,
+    handleClanRecruit,
+    handleClanDonate,
+    handleClanUpgrade,
+    handleClanJoin,
+    handleClanInvite,
+    handleClanAccept,
+    handleClanDecline,
+};
