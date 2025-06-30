@@ -130,7 +130,15 @@ async function handleClanInfo(clanCode) {
     const progressText = nextLevelInfo ? `Vault: ${clan.vaultBalance.toLocaleString()} / ${nextLevelInfo.cost.toLocaleString()} to Level ${nextLevelInfo.level}` : 'Max Level Reached';
     
     const status = clan.recruitment === 1 ? 'Open' : 'Closed';
-    const memberAccounts = await getEconomyCollection().find({ _id: { $in: clan.members } }).toArray();
+    
+    // --- FIX: Get the collection *inside* the function ---
+    const economyCollection = getEconomyCollection();
+    if (!economyCollection) {
+        return { success: false, message: "Database connection is not ready. Please try again in a moment." };
+    }
+    const memberAccounts = await economyCollection.find({ _id: { $in: clan.members } }).toArray();
+    // --- END FIX ---
+
     const memberNames = memberAccounts.map(m => m.drednotName || m.displayName || 'Unnamed Member').join(', ');
 
     const info = [
