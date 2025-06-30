@@ -147,7 +147,8 @@ async function processClanWarTick(client) {
 
         let state = await serverStateCollection.findOne({ stateKey: "clan_war" });
 
-        // This block now handles both a missing document AND an incomplete document with extreme prejudice.
+        // --- STAGE 1: VALIDATE OR INITIALIZE STATE ---
+        // This block ensures that by the end of it, 'state' is a valid object with a valid Date.
         if (!state || !state.warEndTime || !(state.warEndTime instanceof Date)) {
             const reason = !state ? "No state found" : "State was incomplete/invalid";
             console.log(`[CLAN WAR] Initializing/Resetting war. Reason: ${reason}.`);
@@ -155,26 +156,28 @@ async function processClanWarTick(client) {
             const newEndTime = new Date(Date.now() + CLAN_WAR_DURATION_DAYS * 24 * 60 * 60 * 1000);
             
             // Use findOneAndUpdate to ensure we get the updated document back correctly.
-            const updatedStateDoc = await serverStateCollection.findOneAndUpdate(
+            const updateResult = await serverStateCollection.findOneAndUpdate(
                 { stateKey: "clan_war" },
                 { $set: { warEndTime: newEndTime } },
                 { upsert: true, returnDocument: 'after' }
             );
 
-            // The returned document from the driver is the one we must use.
-            state = updatedStateDoc;
+            // In some driver versions, the returned value is the document itself.
+            // We'll re-assign `state` to be this new, guaranteed-to-be-correct document.
+            state = updateResult;
 
-            // Final safeguard. If after all that, state is still invalid, something is deeply wrong.
-            if (!state || !state.warEndTime) {
-                console.error("[CRITICAL CLAN WAR ERROR] Failed to create or update a valid war state. Aborting tick.");
+            // This is the most important safeguard. If the DB operation failed or returned
+            // something unexpected, we abort the tick entirely to prevent a crash.
+            if (!state || !state.warEndTime || !(state.warEndTime instanceof Date)) {
+                console.error("[CRITICAL CLAN WAR ERROR] Failed to create or retrieve a valid war state after update. Aborting tick to prevent crash.");
                 return;
             }
             
-            console.log(`[CLAN WAR] War clock started. Ends at: ${state.warEndTime.toISOString()}`);
+            console.log(`[CLAN WAR] War clock started successfully. Ends at: ${state.warEndTime.toISOString()}`);
             return; // Exit this tick. The next tick will be a normal check.
         }
 
-        // --- Main Logic: Only runs if state is 100% valid ---
+        // --- STAGE 2: PROCESS THE WAR (only if state was valid from the start) ---
         if (new Date() > state.warEndTime) {
             console.log("[CLAN WAR] War has ended. Processing rewards...");
 
