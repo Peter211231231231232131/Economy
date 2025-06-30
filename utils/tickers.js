@@ -137,6 +137,9 @@ async function processGlobalEventTick(client) {
 }
 
 // --- NEW FUNCTION ---
+// /utils/tickers.js
+
+// --- REPLACE THIS ENTIRE FUNCTION ---
 async function processClanWarTick(client) {
     const serverState = getServerStateCollection();
     const clans = getClansCollection();
@@ -153,9 +156,22 @@ async function processClanWarTick(client) {
             warEndTime: endTime,
         };
         await serverState.insertOne(state);
-        console.log(`[CLAN WAR] First war initialized. Ends at: ${endTime.toISOString()}`);
+        // FIX: Ensure we use the date object directly for logging
+        console.log(`[CLAN WAR] First war initialized. Ends at: ${state.warEndTime.toISOString()}`);
         return;
     }
+
+    // --- FIX: ROBUST DATE CHECK ---
+    // Ensure warEndTime is a valid Date object before proceeding.
+    // This handles cases where the value from the DB might be null or improperly formatted.
+    if (!state.warEndTime || !(state.warEndTime instanceof Date)) {
+        console.error("[CLAN WAR ERROR] warEndTime is not a valid Date. Resetting the war clock.");
+        const newEndTime = new Date(Date.now() + CLAN_WAR_DURATION_DAYS * 24 * 60 * 60 * 1000);
+        await serverState.updateOne({ stateKey: "clan_war" }, { $set: { warEndTime: newEndTime } }, { upsert: true });
+        // Update the local state object to prevent further errors in this tick
+        state.warEndTime = newEndTime; 
+    }
+    // --- END FIX ---
 
     // Check if the war is over
     if (new Date() > state.warEndTime) {
@@ -202,7 +218,6 @@ async function processClanWarTick(client) {
         console.log(`[CLAN WAR] All clan points reset. New war started. Ends at: ${newEndTime.toISOString()}`);
     }
 }
-
 const getCurrentGlobalEvent = () => currentGlobalEvent;
 
 function startTickingProcesses(client) {
