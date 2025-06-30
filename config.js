@@ -55,7 +55,7 @@ const TRAITS = {
 // --- ITEMS & RECIPES ---
 // =========================================================================
 const ITEMS = {
-    'trait_reforger': { name: "Trait Reforger", emoji: "✨", description: "A mysterious artifact that allows you to reshape your innate abilities. Use it with /traits reroll or !traitroll." },
+    'trait_reforger': { name: "Trait Reforger", emoji: "✨", description: "A mysterious artifact that allows you to reshape your innate abilities." },
     'iron_ore': { name: "Iron Ore", emoji: "🔩" }, 'copper_ore': { name: "Copper Ore", emoji: "🟤" }, 'wood': { name: "Wood", emoji: "🪵" }, 'stone': { name: "Stone", emoji: "🪨" }, 'coal': { name: "Coal", emoji: "⚫" }, 'raw_crystal':{ name: "Raw Crystal", emoji: "💎" }, 'iron_ingot': { name: "Iron Ingot", emoji: "⛓️" }, 'copper_ingot':{ name: "Copper Ingot", emoji: "🟧" }, 'basic_pickaxe': { name: "Basic Pickaxe", emoji: "⛏️", type: "tool", effects: { work_bonus_flat: 1 }, craftable: true, recipe: { 'stone': 5, 'wood': 2 } }, 'sturdy_pickaxe': { name: "Sturdy Pickaxe", emoji: "⚒️", type: "tool", effects: { work_bonus_percent: 0.10 }, craftable: true, recipe: { 'iron_ore': 10, 'wood': 3, 'coal': 2 } }, 'iron_pickaxe': { name: "Iron Pickaxe", emoji: "🦾", type: "tool", effects: { work_bonus_flat: 5 }, craftable: true, recipe: { 'iron_ingot': 5, 'wood': 2} },
     'copper_pickaxe': { name: "Copper Pickaxe", emoji: "🧡", type: "tool", effects: { work_bonus_percent: 0.05, work_cooldown_reduction_percent: 5 }, craftable: true, recipe: { 'copper_ingot': 8, 'wood': 3 }, description: "A pickaxe made of conductive copper that feels lighter and works faster." },
     'advanced_smelter': { name: "Advanced Smelter", emoji: "🔥", type: "tool", craftable: true, recipe: { 'smelter': 1, 'copper_ingot': 15, 'iron_ingot': 5 }, description: "An upgraded smelter that processes materials twice as fast as a basic one." },
@@ -90,41 +90,47 @@ const LOOTBOXES = {
     'dna_crate': { name: "DNA Crate", emoji: '🧬', price: 100, contents: [ { type: 'item', id: 'trait_reforger', min: 2, max: 15, weight: 100 } ] }
 };
 
-// Use module.exports to make these constants available to other files
+// =========================================================================
+// --- CLAN & WAR DEFINITIONS ---
+// =========================================================================
+const CLAN_MEMBER_LIMIT = 10;
+const CLAN_JOIN_COOLDOWN_HOURS = 1;
+const CLAN_WAR_DURATION_DAYS = 3;
+
+const CLAN_LEVELS = [
+    { level: 1, cost: 0, cumulative: 0, perks: "Founding" },
+    { level: 2, cost: 1000, cumulative: 1000, perks: "Productivity I: +5% Bits from /work." },
+    { level: 3, cost: 5000, cumulative: 6000, perks: "Momentum I: 2.5% chance to reset /work & /gather cooldown." },
+    { level: 4, cost: 7500, cumulative: 13500, perks: "Productivity II: /work bonus increases to +10%." },
+    { level: 5, cost: 15000, cumulative: 28500, perks: "High Roller I: Max /slots bet doubles to 3,000." },
+    { level: 6, cost: 25000, cumulative: 53500, perks: "Abundance I: +1 flat bonus to gathered resources." },
+    { level: 7, cost: 35000, cumulative: 88500, perks: "Momentum II: Cooldown reset chance doubles to 5%." },
+    { level: 8, cost: 50000, cumulative: 138500, perks: "Productivity III: /work bonus increases to +15%." },
+    { level: 9, cost: 75000, cumulative: 213500, perks: "Abundance II: /gather bonus increases to +2." },
+    { level: 10, cost: 125000, cumulative: 338500, perks: "Legacy: /gather bonus increases to +5 & a golden name color." },
+];
+
+const CLAN_WAR_REWARDS = {
+    1: { bits: 0, items: [{ itemId: 'crystal_pickaxe', quantity: 5 }] },
+    2: { bits: 0, items: [{ itemId: 'crystal_pickaxe', quantity: 2 }] },
+    3: { bits: 0, items: [{ itemId: 'crystal_pickaxe', quantity: 1 }] },
+};
+
+
 module.exports = {
-    CURRENCY_NAME,
-    STARTING_BALANCE,
-    DISCORD_INVITE_LINK,
-    DAILY_REWARD_BASE,
-    DAILY_STREAK_BONUS,
-    HOURLY_REWARD_BASE,
-    HOURLY_STREAK_BONUS,
+    CURRENCY_NAME, STARTING_BALANCE, DISCORD_INVITE_LINK,
+    DAILY_REWARD_BASE, DAILY_STREAK_BONUS, HOURLY_REWARD_BASE, HOURLY_STREAK_BONUS,
     WORK_REWARD_MIN, WORK_REWARD_MAX, WORK_COOLDOWN_MINUTES,
-    HOURLY_COOLDOWN_MINUTES,
-    GATHER_COOLDOWN_MINUTES, MAX_GATHER_TYPES_BASE,
-    MARKET_TAX_RATE,
-    FLIP_MIN_BET, FLIP_MAX_BET,
+    HOURLY_COOLDOWN_MINUTES, GATHER_COOLDOWN_MINUTES, MAX_GATHER_TYPES_BASE,
+    MARKET_TAX_RATE, FLIP_MIN_BET, FLIP_MAX_BET,
     SLOTS_MIN_BET, SLOTS_MAX_BET, SLOTS_COOLDOWN_SECONDS,
     SMELT_COOLDOWN_SECONDS_PER_ORE, SMELT_COAL_COST_PER_ORE,
-    MINIMUM_ACTION_COOLDOWN_MS,
-    EVENT_CHANNEL_ID,
-    DREDNOT_INVITE_LINK,
-    EVENT_TICK_INTERVAL_MINUTES,
-    EVENT_CHANCE,
-    EVENTS,
-    TRAITS,
-    ITEMS,
-    GATHER_TABLE,
-    SMELTABLE_ORES,
-    COOKABLE_FOODS,
-    SLOT_REELS,
-    SLOTS_PAYOUTS,
-    VENDOR_TICK_INTERVAL_MINUTES,
-    VENDORS,
-    FALLBACK_PRICES,
-    LOOTBOX_VENDOR_NAME,
-    LOOTBOX_VENDOR_ID,
-    LOOTBOX_TICK_INTERVAL_MINUTES,
-    MAX_LOOTBOX_LISTINGS,
-    LOOTBOXES,
+    MINIMUM_ACTION_COOLDOWN_MS, EVENT_CHANNEL_ID, DREDNOT_INVITE_LINK,
+    EVENT_TICK_INTERVAL_MINUTES, EVENT_CHANCE, EVENTS, TRAITS, ITEMS,
+    GATHER_TABLE, SMELTABLE_ORES, COOKABLE_FOODS, SLOT_REELS, SLOTS_PAYOUTS,
+    VENDOR_TICK_INTERVAL_MINUTES, VENDORS, FALLBACK_PRICES,
+    LOOTBOX_VENDOR_NAME, LOOTBOX_VENDOR_ID, LOOTBOX_TICK_INTERVAL_MINUTES,
+    MAX_LOOTBOX_LISTINGS, LOOTBOXES,
+    CLAN_MEMBER_LIMIT, CLAN_JOIN_COOLDOWN_HOURS, CLAN_WAR_DURATION_DAYS,
+    CLAN_LEVELS, CLAN_WAR_REWARDS,
 };
