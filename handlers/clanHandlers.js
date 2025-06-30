@@ -330,6 +330,7 @@ module.exports = {
     handleClanInfo,
     handleClanList,
     handleClanRecruit,
+    getClanById,
     handleClanDonate,
     handleClanUpgrade,
     handleClanJoin,
