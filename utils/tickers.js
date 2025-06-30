@@ -138,7 +138,6 @@ async function processGlobalEventTick(client) {
 
 // --- NEW FUNCTION ---
 // /utils/tickers.js
-// /utils/tickers.js
 
 // --- REPLACE THIS ENTIRE FUNCTION ---
 async function processClanWarTick(client) {
@@ -148,27 +147,29 @@ async function processClanWarTick(client) {
 
     let state = await serverState.findOne({ stateKey: "clan_war" });
 
-    // --- FIX: COMBINED & ROBUST INITIALIZATION ---
     // This block now handles both a missing document AND an incomplete document.
+    // It also ensures the local 'state' variable is corrected for the current tick.
     if (!state || !state.warEndTime || !(state.warEndTime instanceof Date)) {
         const reason = !state ? "No state found" : "State was incomplete/invalid";
         console.log(`[CLAN WAR] Initializing/Resetting war. Reason: ${reason}.`);
         
         const newEndTime = new Date(Date.now() + CLAN_WAR_DURATION_DAYS * 24 * 60 * 60 * 1000);
         
-        // Use upsert:true to create the document if it's missing, or update it if it exists.
-        await serverState.updateOne(
+        // Use upsert:true to create/update the document in the DB.
+        const updateResult = await serverState.findOneAndUpdate(
             { stateKey: "clan_war" },
             { $set: { warEndTime: newEndTime } },
-            { upsert: true }
+            { upsert: true, returnDocument: 'after' } // This returns the *updated* document
         );
         
-        console.log(`[CLAN WAR] War clock started. Ends at: ${newEndTime.toISOString()}`);
+        // Update the local state variable to match the new DB state.
+        state = updateResult;
+
+        console.log(`[CLAN WAR] War clock started. Ends at: ${state.warEndTime.toISOString()}`);
         return; // End this tick, the next one will be normal.
     }
-    // --- END FIX ---
 
-    // The rest of the function now only runs if we are 100% sure the state is valid.
+    // The rest of the function now only runs if we are 100% sure the state and its warEndTime are valid.
     if (new Date() > state.warEndTime) {
         console.log("[CLAN WAR] War has ended. Processing rewards...");
 
