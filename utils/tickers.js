@@ -136,10 +136,9 @@ async function processGlobalEventTick(client) {
     }
 }
 
-// --- NEW FUNCTION ---
 // /utils/tickers.js
 
-// --- REPLACE THIS ENTIRE FUNCTION ---
+// --- REPLACE THIS ENTIRE FUNCTION (FINAL VERSION) ---
 async function processClanWarTick(client) {
     const serverState = getServerStateCollection();
     const clans = getClansCollection();
@@ -148,7 +147,6 @@ async function processClanWarTick(client) {
     let state = await serverState.findOne({ stateKey: "clan_war" });
 
     // This block now handles both a missing document AND an incomplete document.
-    // It also ensures the local 'state' variable is corrected for the current tick.
     if (!state || !state.warEndTime || !(state.warEndTime instanceof Date)) {
         const reason = !state ? "No state found" : "State was incomplete/invalid";
         console.log(`[CLAN WAR] Initializing/Resetting war. Reason: ${reason}.`);
@@ -162,8 +160,18 @@ async function processClanWarTick(client) {
             { upsert: true, returnDocument: 'after' } // This returns the *updated* document
         );
         
-        // Update the local state variable to match the new DB state.
+        // --- FIX #1: Correctly access the returned document ---
+        // The updated document is in the 'value' property of the result.
+        // If the document was just created (upserted), the original 'state' is null,
+        // so we must use the result.
         state = updateResult;
+
+        // --- FIX #2: Add a safeguard ---
+        // If for any reason the updateResult is null or doesn't have the new time, log an error and exit.
+        if (!state || !state.warEndTime) {
+            console.error("[CRITICAL CLAN WAR ERROR] Failed to update or retrieve war state. Aborting tick.");
+            return;
+        }
 
         console.log(`[CLAN WAR] War clock started. Ends at: ${state.warEndTime.toISOString()}`);
         return; // End this tick, the next one will be normal.
