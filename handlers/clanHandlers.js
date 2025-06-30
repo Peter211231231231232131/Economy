@@ -125,18 +125,15 @@ async function handleClanInfo(clanCode) {
     
     const status = clan.recruitment === 1 ? 'Open' : 'Closed';
     
-    // --- FIX: Get the collection *inside* the function ---
     const economyCollection = getEconomyCollection();
     if (!economyCollection) {
         return { success: false, message: "Database connection is not ready. Please try again in a moment." };
     }
     const memberAccounts = await economyCollection.find({ _id: { $in: clan.members } }).toArray();
-    // --- END FIX ---
-
     const memberNames = memberAccounts.map(m => m.drednotName || m.displayName || 'Unnamed Member').join(', ');
 
     const info = [
-        `**[${clan.tag}] ${clan.name}** [Lv ${clan.level}]`,
+        `**${clan.name}** [Lv ${clan.level}]`, // <-- Removed tag
         `> **Code:** \`{${clan.code}}\``,
         `> **Leader:** ${ownerName}`,
         `> **Recruitment:** ${status}`,
