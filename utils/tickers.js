@@ -138,88 +138,85 @@ async function processGlobalEventTick(client) {
 
 // /utils/tickers.js
 
-// --- REPLACE THIS ENTIRE FUNCTION (FINAL VERSION) ---
+// --- REPLACE THIS ENTIRE FUNCTION (FINAL, ROBUST VERSION) ---
 async function processClanWarTick(client) {
-    const serverState = getServerStateCollection();
-    const clans = getClansCollection();
-    const economy = getEconomyCollection();
+    try {
+        const serverStateCollection = getServerStateCollection();
+        const clansCollection = getClansCollection();
+        const economyCollection = getEconomyCollection();
 
-    let state = await serverState.findOne({ stateKey: "clan_war" });
+        let state = await serverStateCollection.findOne({ stateKey: "clan_war" });
 
-    // This block now handles both a missing document AND an incomplete document.
-    if (!state || !state.warEndTime || !(state.warEndTime instanceof Date)) {
-        const reason = !state ? "No state found" : "State was incomplete/invalid";
-        console.log(`[CLAN WAR] Initializing/Resetting war. Reason: ${reason}.`);
-        
-        const newEndTime = new Date(Date.now() + CLAN_WAR_DURATION_DAYS * 24 * 60 * 60 * 1000);
-        
-        // Use upsert:true to create/update the document in the DB.
-        const updateResult = await serverState.findOneAndUpdate(
-            { stateKey: "clan_war" },
-            { $set: { warEndTime: newEndTime } },
-            { upsert: true, returnDocument: 'after' } // This returns the *updated* document
-        );
-        
-        // --- FIX #1: Correctly access the returned document ---
-        // The updated document is in the 'value' property of the result.
-        // If the document was just created (upserted), the original 'state' is null,
-        // so we must use the result.
-        state = updateResult;
+        // This block now handles both a missing document AND an incomplete document with extreme prejudice.
+        if (!state || !state.warEndTime || !(state.warEndTime instanceof Date)) {
+            const reason = !state ? "No state found" : "State was incomplete/invalid";
+            console.log(`[CLAN WAR] Initializing/Resetting war. Reason: ${reason}.`);
+            
+            const newEndTime = new Date(Date.now() + CLAN_WAR_DURATION_DAYS * 24 * 60 * 60 * 1000);
+            
+            // Use findOneAndUpdate to ensure we get the updated document back correctly.
+            const updatedStateDoc = await serverStateCollection.findOneAndUpdate(
+                { stateKey: "clan_war" },
+                { $set: { warEndTime: newEndTime } },
+                { upsert: true, returnDocument: 'after' }
+            );
 
-        // --- FIX #2: Add a safeguard ---
-        // If for any reason the updateResult is null or doesn't have the new time, log an error and exit.
-        if (!state || !state.warEndTime) {
-            console.error("[CRITICAL CLAN WAR ERROR] Failed to update or retrieve war state. Aborting tick.");
-            return;
+            // The returned document from the driver is the one we must use.
+            state = updatedStateDoc;
+
+            // Final safeguard. If after all that, state is still invalid, something is deeply wrong.
+            if (!state || !state.warEndTime) {
+                console.error("[CRITICAL CLAN WAR ERROR] Failed to create or update a valid war state. Aborting tick.");
+                return;
+            }
+            
+            console.log(`[CLAN WAR] War clock started. Ends at: ${state.warEndTime.toISOString()}`);
+            return; // Exit this tick. The next tick will be a normal check.
         }
 
-        console.log(`[CLAN WAR] War clock started. Ends at: ${state.warEndTime.toISOString()}`);
-        return; // End this tick, the next one will be normal.
-    }
+        // --- Main Logic: Only runs if state is 100% valid ---
+        if (new Date() > state.warEndTime) {
+            console.log("[CLAN WAR] War has ended. Processing rewards...");
 
-    // The rest of the function now only runs if we are 100% sure the state and its warEndTime are valid.
-    if (new Date() > state.warEndTime) {
-        console.log("[CLAN WAR] War has ended. Processing rewards...");
+            const winningClans = await clansCollection.find({ warPoints: { $gt: 0 } }).sort({ warPoints: -1 }).limit(3).toArray();
+            if (winningClans.length > 0) {
+                const eventChannel = client.channels.cache.get(EVENT_CHANNEL_ID);
+                if (eventChannel) {
+                    const winnerDescriptions = winningClans.map((c, i) => {
+                        const medals = ['🏆', '🥈', '🥉'];
+                        return `${medals[i]} **[${c.tag}] ${c.name}** - ${c.warPoints.toLocaleString()} Points`;
+                    });
+                    const embed = new EmbedBuilder()
+                        .setColor('#FFD700')
+                        .setTitle('⚔️ Clan War Concluded! ⚔️')
+                        .setDescription(`The battle has ended! Here are the final standings:\n\n${winnerDescriptions.join('\n')}`)
+                        .setFooter({ text: "Rewards have been distributed to the members of the winning clans." });
+                    await eventChannel.send({ embeds: [embed] }).catch(console.error);
+                }
 
-        // Find top 3 clans
-        const winningClans = await clans.find({ warPoints: { $gt: 0 } }).sort({ warPoints: -1 }).limit(3).toArray();
-        if (winningClans.length > 0) {
-            // Announce winners in event channel
-            const eventChannel = client.channels.cache.get(EVENT_CHANNEL_ID);
-            if (eventChannel) {
-                const winnerDescriptions = winningClans.map((c, i) => {
-                    const medals = ['🏆', '🥈', '🥉'];
-                    return `${medals[i]} **[${c.tag}] ${c.name}** - ${c.warPoints.toLocaleString()} Points`;
-                });
-                const embed = new EmbedBuilder()
-                    .setColor('#FFD700')
-                    .setTitle('⚔️ Clan War Concluded! ⚔️')
-                    .setDescription(`The battle has ended! Here are the final standings:\n\n${winnerDescriptions.join('\n')}`)
-                    .setFooter({ text: "Rewards have been distributed to the members of the winning clans." });
-                await eventChannel.send({ embeds: [embed] }).catch(console.error);
-            }
-
-            // Distribute rewards
-            for (let i = 0; i < winningClans.length; i++) {
-                const clan = winningClans[i];
-                const rank = i + 1;
-                const reward = CLAN_WAR_REWARDS[rank];
-                if (reward && reward.items) {
-                    const members = await economy.find({ clanId: clan._id }).toArray();
-                    for (const member of members) {
-                        for (const item of reward.items) {
-                            await modifyInventory(member._id, item.itemId, item.quantity);
+                for (let i = 0; i < winningClans.length; i++) {
+                    const clan = winningClans[i];
+                    const rank = i + 1;
+                    const reward = CLAN_WAR_REWARDS[rank];
+                    if (reward && reward.items) {
+                        const members = await economyCollection.find({ clanId: clan._id }).toArray();
+                        for (const member of members) {
+                            for (const item of reward.items) {
+                                await modifyInventory(member._id, item.itemId, item.quantity);
+                            }
                         }
                     }
                 }
             }
+            
+            // Reset for the next war
+            await clansCollection.updateMany({}, { $set: { warPoints: 0 } });
+            const newEndTime = new Date(Date.now() + CLAN_WAR_DURATION_DAYS * 24 * 60 * 60 * 1000);
+            await serverStateCollection.updateOne({ stateKey: "clan_war" }, { $set: { warEndTime: newEndTime } });
+            console.log(`[CLAN WAR] All clan points reset. New war started. Ends at: ${newEndTime.toISOString()}`);
         }
-        
-        // Reset for the next war
-        await clans.updateMany({}, { $set: { warPoints: 0 } });
-        const newEndTime = new Date(Date.now() + CLAN_WAR_DURATION_DAYS * 24 * 60 * 60 * 1000);
-        await serverState.updateOne({ stateKey: "clan_war" }, { $set: { warEndTime: newEndTime } });
-        console.log(`[CLAN WAR] All clan points reset. New war started. Ends at: ${newEndTime.toISOString()}`);
+    } catch (error) {
+        console.error("[CRITICAL ERROR IN CLAN WAR TICKER]:", error);
     }
 }
 const getCurrentGlobalEvent = () => currentGlobalEvent;
