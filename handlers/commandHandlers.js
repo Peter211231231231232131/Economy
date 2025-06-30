@@ -1,8 +1,7 @@
 // /handlers/commandHandlers.js
 
 const { getEconomyCollection, getMarketCollection, getLootboxCollection, getMongoClient, getVerificationsCollection, getClansCollection, getServerStateCollection } = require('../utils/database');
-const { getAccount, createNewAccount, updateAccount, modifyInventory, getItemIdByName, formatDuration, findNextAvailableListingId, getPaginatedResponse, selfHealAccount, shuffleArray, openLootbox, getActiveTraits, toBoldFont, rollNewTrait } = require('../utils/utilities');
-const { getClanById } = require('./clanHandlers');
+const { getAccount, createNewAccount, updateAccount, modifyInventory, getItemIdByName, formatDuration, findNextAvailableListingId, getPaginatedResponse, selfHealAccount, shuffleArray, openLootbox, getActiveTraits, toBoldFont, rollNewTrait, secureRandomFloat } = require('../utils/utilities');
 const {
     ITEMS, TRAITS, CURRENCY_NAME, GATHER_TABLE, MAX_GATHER_TYPES_BASE, WORK_REWARD_MIN, WORK_REWARD_MAX,
     WORK_COOLDOWN_MINUTES, MINIMUM_ACTION_COOLDOWN_MS, GATHER_COOLDOWN_MINUTES, HOURLY_COOLDOWN_MINUTES, HOURLY_REWARD_BASE,
