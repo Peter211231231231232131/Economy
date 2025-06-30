@@ -138,6 +138,7 @@ async function processGlobalEventTick(client) {
 
 // --- NEW FUNCTION ---
 // /utils/tickers.js
+// /utils/tickers.js
 
 // --- REPLACE THIS ENTIRE FUNCTION ---
 async function processClanWarTick(client) {
@@ -147,40 +148,34 @@ async function processClanWarTick(client) {
 
     let state = await serverState.findOne({ stateKey: "clan_war" });
 
-    // Initialize state if it doesn't exist
-    if (!state) {
-        const startTime = new Date();
-        const endTime = new Date(startTime.getTime() + CLAN_WAR_DURATION_DAYS * 24 * 60 * 60 * 1000);
-        state = {
-            stateKey: "clan_war",
-            warEndTime: endTime,
-        };
-        await serverState.insertOne(state);
-        // FIX: Ensure we use the date object directly for logging
-        console.log(`[CLAN WAR] First war initialized. Ends at: ${state.warEndTime.toISOString()}`);
-        return;
-    }
-
-    // --- FIX: ROBUST DATE CHECK ---
-    // Ensure warEndTime is a valid Date object before proceeding.
-    // This handles cases where the value from the DB might be null or improperly formatted.
-    if (!state.warEndTime || !(state.warEndTime instanceof Date)) {
-        console.error("[CLAN WAR ERROR] warEndTime is not a valid Date. Resetting the war clock.");
+    // --- FIX: COMBINED & ROBUST INITIALIZATION ---
+    // This block now handles both a missing document AND an incomplete document.
+    if (!state || !state.warEndTime || !(state.warEndTime instanceof Date)) {
+        const reason = !state ? "No state found" : "State was incomplete/invalid";
+        console.log(`[CLAN WAR] Initializing/Resetting war. Reason: ${reason}.`);
+        
         const newEndTime = new Date(Date.now() + CLAN_WAR_DURATION_DAYS * 24 * 60 * 60 * 1000);
-        await serverState.updateOne({ stateKey: "clan_war" }, { $set: { warEndTime: newEndTime } }, { upsert: true });
-        // Update the local state object to prevent further errors in this tick
-        state.warEndTime = newEndTime; 
+        
+        // Use upsert:true to create the document if it's missing, or update it if it exists.
+        await serverState.updateOne(
+            { stateKey: "clan_war" },
+            { $set: { warEndTime: newEndTime } },
+            { upsert: true }
+        );
+        
+        console.log(`[CLAN WAR] War clock started. Ends at: ${newEndTime.toISOString()}`);
+        return; // End this tick, the next one will be normal.
     }
     // --- END FIX ---
 
-    // Check if the war is over
+    // The rest of the function now only runs if we are 100% sure the state is valid.
     if (new Date() > state.warEndTime) {
         console.log("[CLAN WAR] War has ended. Processing rewards...");
 
         // Find top 3 clans
         const winningClans = await clans.find({ warPoints: { $gt: 0 } }).sort({ warPoints: -1 }).limit(3).toArray();
         if (winningClans.length > 0) {
-             // Announce winners in event channel
+            // Announce winners in event channel
             const eventChannel = client.channels.cache.get(EVENT_CHANNEL_ID);
             if (eventChannel) {
                 const winnerDescriptions = winningClans.map((c, i) => {
