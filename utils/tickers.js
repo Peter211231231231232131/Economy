@@ -1,0 +1,198 @@
+// /utils/tickers.js
+
+const { EmbedBuilder } = require('discord.js');
+const { getEconomyCollection, getMarketCollection, getLootboxCollection } = require('./database');
+const { modifyInventory, updateAccount, findNextAvailableListingId } = require('./utilities');
+const {
+    VENDOR_TICK_INTERVAL_MINUTES,
+    LOOTBOX_TICK_INTERVAL_MINUTES,
+    EVENT_TICK_INTERVAL_MINUTES,
+    VENDORS,
+    ITEMS,
+    LOOTBOXES,
+    MAX_LOOTBOX_LISTINGS,
+    EVENT_CHANNEL_ID,
+    EVENT_CHANCE,
+    EVENTS,
+    FALLBACK_PRICES
+} = require('../config');
+
+// This variable will be local to the tickers module
+let currentGlobalEvent = null;
+
+async function getAveragePlayerPrice(itemId) {
+    const marketCollection = getMarketCollection();
+    const playerListings = await marketCollection.find(
+        { itemId: itemId, sellerId: { $not: /^NPC_/ } },
+        { projection: { price: 1 } }
+    ).sort({ price: 1 }).toArray();
+
+    if (playerListings.length === 0) return null;
+    if (playerListings.length < 3) {
+        const simpleTotal = playerListings.reduce((sum, listing) => sum + listing.price, 0);
+        return simpleTotal / playerListings.length;
+    }
+
+    const sliceAmount = Math.floor(playerListings.length * 0.1);
+    const sanitizedListings = playerListings.slice(sliceAmount, -sliceAmount);
+    const listToAverage = sanitizedListings.length > 0 ? sanitizedListings : playerListings;
+
+    const totalValue = listToAverage.reduce((sum, listing) => sum + listing.price, 0);
+    return totalValue / listToAverage.length;
+}
+
+async function processVendorTicks() {
+    console.log("Processing regular vendor tick...");
+    const marketCollection = getMarketCollection();
+    const vendor = VENDORS[Math.floor(Math.random() * VENDORS.length)];
+    const currentListingsCount = await marketCollection.countDocuments({ sellerId: vendor.sellerId });
+    if (currentListingsCount >= 3) {
+        return;
+    }
+
+    if (Math.random() < vendor.chance) {
+        const itemToSell = vendor.stock[Math.floor(Math.random() * vendor.stock.length)];
+        let finalPrice;
+
+        if (itemToSell.price) {
+            finalPrice = itemToSell.price;
+        } else {
+            const avgPrice = await getAveragePlayerPrice(itemToSell.itemId);
+            if (avgPrice) {
+                finalPrice = Math.ceil(avgPrice * 1.15);
+            } else {
+                const priceRange = FALLBACK_PRICES[itemToSell.itemId] || FALLBACK_PRICES.default;
+                finalPrice = Math.floor(Math.random() * (priceRange.max - priceRange.min + 1)) + priceRange.min;
+            }
+        }
+
+        try {
+            const newListingId = await findNextAvailableListingId(marketCollection);
+            await marketCollection.insertOne({
+                listingId: newListingId,
+                sellerId: vendor.sellerId,
+                sellerName: vendor.name,
+                itemId: itemToSell.itemId,
+                quantity: itemToSell.quantity,
+                price: finalPrice
+            });
+            console.log(`${vendor.name} listed ${itemToSell.quantity}x ${ITEMS[itemToSell.itemId].name} for ${finalPrice} Bits each!`);
+        } catch (error) {
+            if (error.code === 11000) { // Duplicate key error
+                console.warn(`[Vendor Tick] Race condition for ${vendor.name}. Retrying next tick.`);
+            } else {
+                console.error(`[Vendor Tick] Error for ${vendor.name}:`, error);
+            }
+        }
+    }
+}
+
+async function processLootboxVendorTick() {
+    const lootboxCollection = getLootboxCollection();
+    console.log("Processing lootbox vendor tick...");
+    const currentListings = await lootboxCollection.find({}).toArray();
+    const currentListingsCount = currentListings.length;
+
+    if (currentListingsCount > 0 && Math.random() < 0.25) {
+        const listingToRemove = currentListings[Math.floor(Math.random() * currentListings.length)];
+        await lootboxCollection.deleteOne({ _id: listingToRemove._id });
+        const crateName = LOOTBOXES[listingToRemove.lootboxId]?.name || 'an unknown crate';
+        console.log(`The Collector removed all ${crateName}s from the shop.`);
+        return;
+    }
+
+    if (currentListingsCount < MAX_LOOTBOX_LISTINGS) {
+        const existingCrateIds = currentListings.map(c => c.lootboxId);
+        const availableCrates = Object.keys(LOOTBOXES).filter(id => !existingCrateIds.includes(id));
+        if (availableCrates.length > 0) {
+            const crateToSellId = availableCrates[Math.floor(Math.random() * availableCrates.length)];
+            const crateToSell = LOOTBOXES[crateToSellId];
+            const quantity = Math.floor(Math.random() * 5) + 1;
+            await lootboxCollection.insertOne({
+                sellerId: "NPC_COLLECTOR",
+                lootboxId: crateToSellId,
+                quantity: quantity,
+                price: crateToSell.price
+            });
+            console.log(`The Collector listed ${quantity}x ${crateToSell.name}!`);
+        }
+    }
+}
+
+async function processFinishedSmelting(client) {
+    const economyCollection = getEconomyCollection();
+    const now = Date.now();
+    const finishedSmelts = await economyCollection.find({ "smelting.finishTime": { $ne: null, $lte: now } }).toArray();
+
+    for (const account of finishedSmelts) {
+        const { resultItemId, quantity } = account.smelting;
+        await modifyInventory(account._id, resultItemId, quantity);
+        await updateAccount(account._id, { smelting: null });
+
+        try {
+            if (account.discordId) {
+                const user = await client.users.fetch(account.discordId);
+                user.send(`✅ Your processing is complete! You received ${quantity}x ${ITEMS[resultItemId].name}.`);
+            }
+        } catch (e) {
+            console.log(`Could not DM ${account.drednotName || account._id} about finished processing.`);
+        }
+    }
+}
+
+async function processGlobalEventTick(client) {
+    const now = Date.now();
+    const eventChannel = client.channels.cache.get(EVENT_CHANNEL_ID);
+
+    if (currentGlobalEvent && now > currentGlobalEvent.expiresAt) {
+        console.log(`Global event '${currentGlobalEvent.name}' has ended.`);
+        if (eventChannel) {
+            const endEmbed = new EmbedBuilder()
+                .setColor('#DDDDDD')
+                .setTitle(`${currentGlobalEvent.emoji} Event Ended!`)
+                .setDescription(`The **${currentGlobalEvent.name}** event is now over. Things are back to normal!`);
+            await eventChannel.send({ embeds: [endEmbed] }).catch(console.error);
+        }
+        currentGlobalEvent = null;
+    }
+
+    if (!currentGlobalEvent && Math.random() < EVENT_CHANCE) {
+        const eventKeys = Object.keys(EVENTS);
+        const randomEventKey = eventKeys[Math.floor(Math.random() * eventKeys.length)];
+        const eventData = EVENTS[randomEventKey];
+        currentGlobalEvent = {
+            ...eventData,
+            type: randomEventKey,
+            startedAt: now,
+            expiresAt: now + eventData.duration_ms,
+        };
+        console.log(`Starting new global event: '${currentGlobalEvent.name}'`);
+        if (eventChannel) {
+            const startEmbed = new EmbedBuilder()
+                .setColor('#FFD700')
+                .setTitle(`${currentGlobalEvent.emoji} GLOBAL EVENT STARTED!`)
+                .setDescription(`**${currentGlobalEvent.name}**\n\n${currentGlobalEvent.description}`)
+                .setFooter({ text: `This event will last for formatDuration(currentGlobalEvent.duration_ms / 1000).` });
+            await eventChannel.send({ content: '@here A new global event has begun!', embeds: [startEmbed] }).catch(console.error);
+        }
+    }
+}
+
+// Function to get the currently active event
+const getCurrentGlobalEvent = () => currentGlobalEvent;
+
+// We will export one function to start all the tickers from index.js
+function startTickingProcesses(client) {
+    setInterval(processVendorTicks, VENDOR_TICK_INTERVAL_MINUTES * 60 * 1000);
+    setInterval(processLootboxVendorTick, LOOTBOX_TICK_INTERVAL_MINUTES * 60 * 1000);
+    setInterval(() => processFinishedSmelting(client), 5000);
+    setInterval(() => processGlobalEventTick(client), EVENT_TICK_INTERVAL_MINUTES * 60 * 1000);
+    
+    // We can add the new clan war ticker here later
+    // setInterval(() => processClanWarTick(client), 60 * 1000);
+}
+
+module.exports = {
+    startTickingProcesses,
+    getCurrentGlobalEvent,
+};
