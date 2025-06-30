@@ -3,8 +3,9 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { getAccount, createNewAccount, selfHealAccount, modifyInventory, getItemIdByName, getPaginatedResponse, rollNewTrait, openLootbox } = require('../utils/utilities');
 const commandHandlers = require('./commandHandlers');
+const clanHandlers = require('./clanHandlers'); // <-- NEW: Import clan handlers
 const { getEconomyCollection, getMarketCollection, getLootboxCollection, getVerificationsCollection } = require('../utils/database');
-const { ITEMS, TRAITS, STARTING_BALANCE, DREDNOT_INVITE_LINK, MARKET_TAX_RATE } = require('../config');
+const { ITEMS, TRAITS, STARTING_BALANCE, DREDNOT_INVITE_LINK, MARKET_TAX_RATE, LOOTBOXES, CURRENCY_NAME } = require('../config');
 const { getCurrentGlobalEvent } = require('../utils/tickers');
 
 async function handleButtonInteraction(interaction) {
@@ -13,7 +14,7 @@ async function handleButtonInteraction(interaction) {
         if (interaction.user.id !== userId) {
             return interaction.reply({ content: "You cannot use these buttons.", ephemeral: true });
         }
-        const { userPaginationData } = require('../utils/utilities'); // re-require to get current state
+        const { userPaginationData } = require('../utils/utilities');
         const session = userPaginationData[userId];
         if (!session) {
             return interaction.update({ content: 'This interactive message has expired or is invalid.', components: [] });
@@ -33,24 +34,16 @@ async function handleButtonInteraction(interaction) {
 async function handleAutocomplete(interaction) {
     const focusedOption = interaction.options.getFocused(true);
     let choices = [];
-
-    if (interaction.commandName === 'craft') {
-        choices = Object.values(ITEMS).filter(i => i.craftable).map(i => i.name);
-    } else if (interaction.commandName === 'eat') {
-        choices = Object.values(ITEMS).filter(i => i.type === 'food' && i.buff).map(i => i.name);
-    } else if (interaction.commandName === 'info') {
-        const itemNames = Object.values(ITEMS).map(i => i.name);
-        const traitNames = Object.values(TRAITS).map(t => t.name);
-        choices = [...itemNames, ...traitNames];
-    } else if (interaction.commandName === 'marketsell' || interaction.commandName === 'smelt') {
-        choices = Object.values(ITEMS).map(i => i.name);
-    } else if (interaction.commandName === 'crateshopbuy' && focusedOption.name === 'crate_name') {
+    if (interaction.commandName === 'craft') { choices = Object.values(ITEMS).filter(i => i.craftable).map(i => i.name); }
+    else if (interaction.commandName === 'eat') { choices = Object.values(ITEMS).filter(i => i.type === 'food' && i.buff).map(i => i.name); }
+    else if (interaction.commandName === 'info') { const itemNames = Object.values(ITEMS).map(i => i.name); const traitNames = Object.values(TRAITS).map(t => t.name); choices = [...itemNames, ...traitNames]; }
+    else if (interaction.commandName === 'marketsell' || interaction.commandName === 'smelt') { choices = Object.values(ITEMS).map(i => i.name); }
+    else if (interaction.commandName === 'crateshopbuy' && focusedOption.name === 'crate_name') {
         const lootboxCollection = getLootboxCollection();
         const currentListings = await lootboxCollection.find({}).toArray();
         const availableCrateIds = new Set(currentListings.map(l => l.lootboxId));
         choices = Object.keys(LOOTBOXES).filter(id => availableCrateIds.has(id)).map(id => LOOTBOXES[id].name);
     }
-
     const filtered = choices.filter(choice => choice.toLowerCase().startsWith(focusedOption.value.toLowerCase())).slice(0, 25);
     await interaction.respond(filtered.map(choice => ({ name: choice, value: choice })));
 }
@@ -62,8 +55,12 @@ async function handleSlashCommand(interaction) {
         if (!interaction.isChatInputCommand()) return;
 
         const { commandName, user, options } = interaction;
-        const privateCommands = ['link', 'name', 'timers', 'inventory', 'balance', 'traits', 'marketcancel'];
-        if (privateCommands.includes(commandName)) {
+        const privateCommands = ['link', 'name', 'timers', 'inventory', 'balance', 'traits', 'marketcancel', 'clan'];
+        
+        // The clan war command is public, so we make an exception for it.
+        const isPublicClanCommand = commandName === 'clan' && ['war', 'list', 'info'].includes(options.getSubcommand());
+
+        if (privateCommands.includes(commandName) && !isPublicClanCommand) {
             await interaction.deferReply({ ephemeral: true });
         } else {
             await interaction.deferReply();
@@ -80,17 +77,90 @@ async function handleSlashCommand(interaction) {
 
         if (account.wasBumped) {
             await updateAccount(user.id, { wasBumped: false });
-            const bumpedEmbed = new EmbedBuilder()
-                .setColor('#FEE75C')
-                .setTitle('Display Name Reset!')
-                .setDescription("A player from Drednot has registered with the name you were using. Since Drednot names have priority, your display name has been reset.\nPlease use the `/name` command to choose a new, unique display name, or use `/link` to connect your own Drednot account.");
+            const bumpedEmbed = new EmbedBuilder().setColor('#FEE75C').setTitle('Display Name Reset!').setDescription("A player from Drednot has registered with the name you were using. Since Drednot names have priority, your display name has been reset.\nPlease use the `/name` command to choose a new, unique display name, or use `/link` to connect your own Drednot account.");
             return interaction.editReply({ embeds: [bumpedEmbed] });
         }
 
-        // --- Command Handling Switch ---
         let result, amount, choice, itemName, quantity, price, listingId;
 
         switch (commandName) {
+            // --- NEW: CLAN COMMAND GROUP ---
+            case 'clan': {
+                const sub = options.getSubcommand();
+                let clanResult;
+                switch (sub) {
+                    case 'create':
+                        const clanName = options.getString('name');
+                        const clanTag = options.getString('tag');
+                        clanResult = await clanHandlers.handleClanCreate(account, clanName, clanTag);
+                        break;
+                    case 'leave':
+                        clanResult = await clanHandlers.handleClanLeave(account);
+                        break;
+                    case 'disband':
+                        clanResult = await clanHandlers.handleClanDisband(account);
+                        break;
+                    case 'kick':
+                        const targetUserKick = options.getUser('user');
+                        const targetAccountKick = await getAccount(targetUserKick.id);
+                        if (!targetAccountKick) clanResult = { success: false, message: "That user does not have an economy account." };
+                        else clanResult = await clanHandlers.handleClanKick(account, targetAccountKick);
+                        break;
+                    case 'recruit':
+                        const status = options.getInteger('status');
+                        clanResult = await clanHandlers.handleClanRecruit(account, status);
+                        break;
+                    case 'upgrade':
+                        clanResult = await clanHandlers.handleClanUpgrade(account);
+                        break;
+                    case 'donate':
+                        amount = options.getInteger('amount');
+                        clanResult = await clanHandlers.handleClanDonate(account, amount);
+                        break;
+                    case 'info':
+                        const codeInfo = options.getString('code');
+                        clanResult = await clanHandlers.handleClanInfo(codeInfo);
+                        break;
+                    case 'list':
+                        clanResult = await clanHandlers.handleClanList();
+                        if (clanResult.success) {
+                            const { discord } = getPaginatedResponse(user.id, 'clan_list', clanResult.lines, 'Clan Browser', 0);
+                            return interaction.editReply(discord);
+                        }
+                        break;
+                    case 'war':
+                        clanResult = await commandHandlers.handleClanWar();
+                        // This command is public and doesn't need a wrapper embed.
+                        return interaction.editReply({ content: clanResult.message });
+                    case 'join':
+                        const codeJoin = options.getString('code');
+                        clanResult = await clanHandlers.handleClanJoin(account, codeJoin);
+                        break;
+                    case 'invite':
+                        const targetUserInvite = options.getUser('user');
+                        if (targetUserInvite) {
+                            const targetAccountInvite = await getAccount(targetUserInvite.id);
+                            if (!targetAccountInvite) clanResult = { success: false, message: "That user does not have an economy account." };
+                            else clanResult = await clanHandlers.handleClanInvite(account, targetAccountInvite);
+                        } else { // Player checking their own invites or owner checking applicants
+                            clanResult = await clanHandlers.handleClanInvite(account, account.clanId ? 'view' : null);
+                        }
+                        break;
+                    case 'accept':
+                        const identifier = options.getString('user_or_code');
+                        clanResult = await clanHandlers.handleClanAccept(account, identifier);
+                        break;
+                    case 'decline':
+                        const codeDecline = options.getString('code');
+                        clanResult = await clanHandlers.handleClanDecline(account, codeDecline);
+                        break;
+                }
+                const clanEmbed = new EmbedBuilder()
+                    .setColor(clanResult.success ? '#57F287' : '#ED4245')
+                    .setDescription(clanResult.message || (clanResult.lines ? clanResult.lines.join('\n') : "An unknown error occurred."));
+                return interaction.editReply({ embeds: [clanEmbed] });
+            }
+
             case 'info': {
                 const name = options.getString('name');
                 const itemId = getItemIdByName(name);
@@ -221,7 +291,7 @@ async function handleSlashCommand(interaction) {
                 return interaction.editReply({ content: `Success! Your display name has been set to **${newName}**.` });
             }
             case 'balance': {
-                const balanceEmbed = new EmbedBuilder().setColor('#3498DB').setTitle('💰 Your Wallet').setAuthor({ name: user.username, iconURL: user.displayAvatarURL() }).addFields({ name: 'Current Balance', value: `**${Math.floor(account.balance)}** ${require('../config').CURRENCY_NAME}` });
+                const balanceEmbed = new EmbedBuilder().setColor('#3498DB').setTitle('💰 Your Wallet').setAuthor({ name: user.username, iconURL: user.displayAvatarURL() }).addFields({ name: 'Current Balance', value: `**${Math.floor(account.balance)}** ${CURRENCY_NAME}` });
                 await interaction.editReply({ embeds: [balanceEmbed] });
                 break;
             }
@@ -238,7 +308,6 @@ async function handleSlashCommand(interaction) {
                 await interaction.editReply({ embeds: [timerEmbed] });
                 break;
             }
-            // --- Action Commands ---
             case 'work': result = await commandHandlers.handleWork(account); break;
             case 'daily': result = await commandHandlers.handleDaily(account); break;
             case 'hourly': result = await commandHandlers.handleHourly(account); break;
@@ -261,7 +330,6 @@ async function handleSlashCommand(interaction) {
                 }
                 break;
             }
-            // --- Market Commands ---
             case 'marketsell': {
                 itemName = options.getString('item_name');
                 quantity = options.getInteger('quantity');
@@ -298,7 +366,7 @@ async function handleSlashCommand(interaction) {
                 const purchaseUpdateResult = await economyCollection.updateOne({ _id: account._id, balance: { $gte: totalCost } }, { $inc: { balance: -totalCost } });
                 if (purchaseUpdateResult.modifiedCount === 0) {
                     await marketCollection.insertOne(listingToBuy); // Refund listing
-                    return interaction.editReply({ embeds: [new EmbedBuilder().setColor('#ED4245').setDescription(`You can't afford this. It costs **${totalCost} ${require('../config').CURRENCY_NAME}**.`)] });
+                    return interaction.editReply({ embeds: [new EmbedBuilder().setColor('#ED4245').setDescription(`You can't afford this. It costs **${totalCost} ${CURRENCY_NAME}**.`)] });
                 }
 
                 await modifyInventory(account._id, listingToBuy.itemId, listingToBuy.quantity);
@@ -311,7 +379,7 @@ async function handleSlashCommand(interaction) {
                     await economyCollection.updateOne({ _id: sellerAccount._id }, { $inc: { balance: earnings } });
                 }
                 const sellerName = sellerAccount ? (sellerAccount.drednotName || sellerAccount.displayName || `User ${sellerAccount._id}`) : listingToBuy.sellerName;
-                return interaction.editReply({ embeds: [new EmbedBuilder().setColor('#57F287').setDescription(`You bought **${listingToBuy.quantity}x** ${ITEMS[listingToBuy.itemId].name} for **${totalCost} ${require('../config').CURRENCY_NAME}** from *${sellerName}*!`)] });
+                return interaction.editReply({ embeds: [new EmbedBuilder().setColor('#57F287').setDescription(`You bought **${listingToBuy.quantity}x** ${ITEMS[listingToBuy.itemId].name} for **${totalCost} ${CURRENCY_NAME}** from *${sellerName}*!`)] });
             }
             case 'marketcancel': {
                 const listingIdToCancel = options.getInteger('listing_id');
@@ -338,7 +406,7 @@ async function handleSlashCommand(interaction) {
                 const purchaseResult = await economyCollection.updateOne({ _id: account._id, balance: { $gte: totalCost } }, { $inc: { balance: -totalCost } });
                 if(purchaseResult.modifiedCount === 0) {
                     await lootboxCollection.updateOne({ _id: listing._id }, { $inc: { quantity: amountToOpen } }); // Refund crate stock
-                    return interaction.editReply({ embeds: [new EmbedBuilder().setColor('#ED4245').setDescription(`You can't afford that. It costs **${totalCost} ${require('../config').CURRENCY_NAME}**.`)] });
+                    return interaction.editReply({ embeds: [new EmbedBuilder().setColor('#ED4245').setDescription(`You can't afford that. It costs **${totalCost} ${CURRENCY_NAME}**.`)] });
                 }
 
                 let updates = { $inc: {} };
@@ -353,7 +421,7 @@ async function handleSlashCommand(interaction) {
                 for (const rewardId in totalRewards) {
                     if (rewardId === 'bits') {
                         updates.$inc.balance = (updates.$inc.balance || 0) + totalRewards[rewardId];
-                        rewardMessages.push(`**${totalRewards[rewardId]}** ${require('../config').CURRENCY_NAME}`);
+                        rewardMessages.push(`**${totalRewards[rewardId]}** ${CURRENCY_NAME}`);
                     } else {
                         updates.$inc[`inventory.${rewardId}`] = (updates.$inc[`inventory.${rewardId}`] || 0) + totalRewards[rewardId];
                         rewardMessages.push(`${ITEMS[rewardId].emoji} **${totalRewards[rewardId]}x** ${ITEMS[rewardId].name}`);
@@ -366,7 +434,6 @@ async function handleSlashCommand(interaction) {
             }
         }
         
-        // Default handler for simple commands
         if (result) {
             const responseEmbed = new EmbedBuilder()
                 .setColor(result.success ? '#57F287' : '#ED4245')
@@ -375,12 +442,8 @@ async function handleSlashCommand(interaction) {
             await interaction.editReply({ embeds: [responseEmbed] });
         }
 
-        // --- New User Welcome Message ---
         if (isNewUser) {
-            const welcomeEmbed = new EmbedBuilder()
-                .setColor('#57F287')
-                .setTitle('👋 Welcome!')
-                .setDescription(`I've created a temporary economy account for you with a starting balance of **${STARTING_BALANCE} ${require('../config').CURRENCY_NAME}** and two random traits.\n\nUse \`/traits view\` to see what you got! You can use \`/name\` to set a custom name for the leaderboard if you don't plan on linking a Drednot account.\n\nAlternatively, click the button below to start the process of linking your Drednot.io account.`);
+            const welcomeEmbed = new EmbedBuilder().setColor('#57F287').setTitle('👋 Welcome!').setDescription(`I've created a temporary economy account for you with a starting balance of **${STARTING_BALANCE} ${CURRENCY_NAME}** and two random traits.\n\nUse \`/traits view\` to see what you got! You can use \`/name\` to set a custom name for the leaderboard if you don't plan on linking a Drednot account.\n\nAlternatively, click the button below to start the process of linking your Drednot.io account.`);
             const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('guide_link_account').setLabel('Link Drednot Account').setStyle(ButtonStyle.Success).setEmoji('🔗'));
             await interaction.followUp({ embeds: [welcomeEmbed], components: [row], ephemeral: true });
         }
