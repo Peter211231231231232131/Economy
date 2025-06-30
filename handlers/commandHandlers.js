@@ -10,7 +10,7 @@ const {
     SLOT_REELS, SLOTS_PAYOUTS, MARKET_TAX_RATE, LOOTBOXES, STARTING_BALANCE, DREDNOT_INVITE_LINK, DISCORD_INVITE_LINK, CLAN_LEVELS
 } = require('../config');
 const { getCurrentGlobalEvent } = require('../utils/tickers');
-
+const { getClanById } = require('./clanHandlers');
 // This file contains the core logic for every player command.
 
 function handleItemInfo(itemId) {
