@@ -1,17 +1,14 @@
 // /handlers/commandHandlers.js
 
-const { EmbedBuilder } = require('discord.js');
-const { getEconomyCollection, getMarketCollection, getLootboxCollection, getMongoClient, getVerificationsCollection } = require('../utils/database');
-const {
-    getAccount, createNewAccount, updateAccount, modifyInventory, getItemIdByName, formatDuration, findNextAvailableListingId,
-    getPaginatedResponse, selfHealAccount, shuffleArray, openLootbox, getActiveTraits, toBoldFont, rollNewTrait
-} = require('../utils/utilities');
+const { getEconomyCollection, getMarketCollection, getLootboxCollection, getMongoClient, getVerificationsCollection, getClansCollection, getServerStateCollection } = require('../utils/database');
+const { getAccount, createNewAccount, updateAccount, modifyInventory, getItemIdByName, formatDuration, findNextAvailableListingId, getPaginatedResponse, selfHealAccount, shuffleArray, openLootbox, getActiveTraits, toBoldFont, rollNewTrait } = require('../utils/utilities');
+const { getClanById } = require('./clanHandlers');
 const {
     ITEMS, TRAITS, CURRENCY_NAME, GATHER_TABLE, MAX_GATHER_TYPES_BASE, WORK_REWARD_MIN, WORK_REWARD_MAX,
     WORK_COOLDOWN_MINUTES, MINIMUM_ACTION_COOLDOWN_MS, GATHER_COOLDOWN_MINUTES, HOURLY_COOLDOWN_MINUTES, HOURLY_REWARD_BASE,
     HOURLY_STREAK_BONUS, DAILY_REWARD_BASE, DAILY_STREAK_BONUS, SMELTABLE_ORES, COOKABLE_FOODS, SMELT_COAL_COST_PER_ORE,
     SMELT_COOLDOWN_SECONDS_PER_ORE, FLIP_MIN_BET, FLIP_MAX_BET, SLOTS_MIN_BET, SLOTS_MAX_BET, SLOTS_COOLDOWN_SECONDS,
-    SLOT_REELS, SLOTS_PAYOUTS, MARKET_TAX_RATE, LOOTBOXES, STARTING_BALANCE, DREDNOT_INVITE_LINK, DISCORD_INVITE_LINK
+    SLOT_REELS, SLOTS_PAYOUTS, MARKET_TAX_RATE, LOOTBOXES, STARTING_BALANCE, DREDNOT_INVITE_LINK, DISCORD_INVITE_LINK, CLAN_LEVELS
 } = require('../config');
 const { getCurrentGlobalEvent } = require('../utils/tickers');
 
@@ -228,7 +225,7 @@ async function handleTimers(account) {
     }
 
     if(account.clanJoinCooldown && now < account.clanJoinCooldown) {
-        timers.push(`> 🛡️ **Clan Join**: ${formatDuration((account.clanJoinCooldown - now) / 1000)}`);
+        timers.push(`> 🛡️ **Clan Join**: ${formatDuration((account.clanJoinCooldown.getTime() - now) / 1000)}`);
     }
 
     if (activeBuffs.length > 0) {
@@ -243,34 +240,38 @@ async function handleTimers(account) {
     return timers;
 }
 
+// --- MODIFIED ---
 async function handleWork(account) {
     const economyCollection = getEconomyCollection();
     let now = Date.now();
     let baseCooldown = WORK_COOLDOWN_MINUTES * 60 * 1000;
-    let workBonusPercent = 0, scavengerChance = 0, cooldownReductionPercent = 0, zealStacks = 0, zealBonusPerStack = 0;
+    let workBonusPercent = 0, scavengerChance = 0, cooldownReductionPercent = 0;
+    let momentumChance = 0;
+
+    // --- CLAN PERK INTEGRATION ---
+    let clan = null;
+    if (account.clanId) {
+        clan = await getClanById(account.clanId);
+        if (clan) {
+            if (clan.level >= 8) workBonusPercent += 15;
+            else if (clan.level >= 4) workBonusPercent += 10;
+            else if (clan.level >= 2) workBonusPercent += 5;
+            
+            if (clan.level >= 7) momentumChance = 5;
+            else if (clan.level >= 3) momentumChance = 2.5;
+        }
+    }
+    // --- END CLAN PERK INTEGRATION ---
 
     // Trait bonuses
     if (account.traits) {
         getActiveTraits(account, 'wealth').forEach(t => workBonusPercent += 5 * t.level);
         getActiveTraits(account, 'scavenger').forEach(t => scavengerChance += 5 * t.level);
         getActiveTraits(account, 'prodigy').forEach(t => cooldownReductionPercent += 5 * t.level);
-        const zealotTraits = getActiveTraits(account, 'zealot');
-        if (zealotTraits.length > 0) {
-            const zealotLevel = zealotTraits[0].level;
-            zealBonusPerStack = 2.5 * zealotLevel;
-            if (account.zeal && (now - account.zeal.lastAction) < 10 * 60 * 1000) {
-                zealStacks = Math.min(10, (account.zeal.stacks || 0) + 1);
-            } else {
-                zealStacks = 1;
-            }
-            workBonusPercent += zealStacks * zealBonusPerStack;
-        }
     }
 
-    // Cooldown calculation
     let currentCooldown = baseCooldown * (1 - cooldownReductionPercent / 100);
     
-    // Tool effects on cooldown and bonus
     let toolBonusFlat = 0;
     let toolBonusPercent = 0;
     for (const itemId in account.inventory) {
@@ -287,144 +288,141 @@ async function handleWork(account) {
         }
     }
     
-    // Active buffs
-    let activeBuffs = (account.activeBuffs || []).filter(buff => buff.expiresAt > now);
-    for (const buff of activeBuffs) {
-        if (buff.itemId === 'the_addict_rush') workBonusPercent += buff.effects.work_bonus_percent;
-        const itemDef = ITEMS[buff.itemId];
-        if (itemDef?.buff?.effects) {
-            if (itemDef.buff.effects.work_bonus_percent) workBonusPercent += itemDef.buff.effects.work_bonus_percent;
-            if (itemDef.buff.effects.work_cooldown_reduction_ms) currentCooldown -= itemDef.buff.effects.work_cooldown_reduction_ms;
-        }
-    }
-
     currentCooldown = Math.max(MINIMUM_ACTION_COOLDOWN_MS, currentCooldown);
-
     if (account.lastWork && (now - account.lastWork) < currentCooldown) {
         return { success: false, message: `You are on cooldown. Wait **${formatDuration((currentCooldown - (now - account.lastWork)) / 1000)}**.` };
     }
     
     let baseEarnings = Math.floor(secureRandomFloat() * (WORK_REWARD_MAX - WORK_REWARD_MIN + 1)) + WORK_REWARD_MIN;
-
     const totalPercentBonus = workBonusPercent + (toolBonusPercent * 100);
     const bonusFromPercent = Math.floor(baseEarnings * (totalPercentBonus / 100));
-    const bonusFromFlat = toolBonusFlat;
-    const totalBonus = bonusFromPercent + bonusFromFlat;
-    let totalEarnings = baseEarnings + totalBonus;
+    let totalEarnings = baseEarnings + bonusFromPercent + toolBonusFlat;
 
-    let bonusText = totalBonus > 0 ? ` (+${totalBonus} bonus)` : '';
+    let bonusText = (bonusFromPercent + toolBonusFlat) > 0 ? ` (+${(bonusFromPercent + toolBonusFlat)} bonus)` : '';
     let eventMessage = '';
     const currentGlobalEvent = getCurrentGlobalEvent();
     if (currentGlobalEvent && currentGlobalEvent.effect.type === 'work') {
         totalEarnings *= currentGlobalEvent.effect.multiplier;
         eventMessage = ` **(x${currentGlobalEvent.effect.multiplier} ${currentGlobalEvent.name}!)**`;
     }
-
-    if (!isFinite(totalEarnings) || isNaN(totalEarnings)) {
-        console.error(`[CRITICAL] Invalid earnings calculated for account ${account._id}. Value: ${totalEarnings}. Aborting balance update.`);
-        return { success: false, message: "An error occurred while calculating your earnings. Your balance has not been changed. Please contact an admin." };
-    }
+    
+    if (!isFinite(totalEarnings) || isNaN(totalEarnings)) { return { success: false, message: "An error occurred calculating earnings." }; }
 
     let finalMessage = `You earned **${Math.round(totalEarnings)}** ${CURRENCY_NAME}${bonusText}!${eventMessage}`;
-    let updates = { $inc: { balance: totalEarnings }, $set: { lastWork: now, 'zeal.stacks': zealStacks, 'zeal.lastAction': now }, $pull: { activeBuffs: { itemId: 'the_addict_rush' } } };
+    const cooldownReset = Math.random() * 100 < momentumChance;
+    let updates = { $inc: { balance: totalEarnings } };
 
+    if (!cooldownReset) {
+        updates.$set = { lastWork: now };
+    } else {
+        finalMessage += `\n> ✨ Your clan's **Momentum** perk reset your cooldown!`;
+    }
+    
     let scavengerLoot = '';
     if (scavengerChance > 0 && secureRandomFloat() * 100 < scavengerChance) {
         const loot = ['wood', 'stone'][Math.floor(Math.random() * 2)];
         const qty = Math.floor(Math.random() * 3) + 1;
         scavengerLoot = `\n> Your Scavenger trait found you **${qty}x** ${ITEMS[loot].name}!`;
-        if (!updates.$inc) updates.$inc = {};
+        if(!updates.$inc) updates.$inc = {};
         updates.$inc[`inventory.${loot}`] = qty;
     }
-
     await economyCollection.updateOne({ _id: account._id }, updates);
+
+    // --- CLAN WAR INTEGRATION ---
+    if (clan) {
+        const warState = await getServerStateCollection().findOne({ stateKey: "clan_war" });
+        if (warState && new Date() < warState.warEndTime) {
+            await getClansCollection().updateOne({ _id: clan._id }, { $inc: { warPoints: 1 } });
+        }
+    }
+    // --- END CLAN WAR INTEGRATION ---
+
     return { success: true, message: finalMessage + scavengerLoot, earned: totalEarnings };
 }
 
+// --- MODIFIED ---
 async function handleGather(account) {
     const economyCollection = getEconomyCollection();
     let now = Date.now();
     let baseCooldown = GATHER_COOLDOWN_MINUTES * 60 * 1000;
-    let cooldownReductionPercent = 0, surveyorChance = 0, zealStacks = 0, zealBonusPerStack = 0;
+    let cooldownReductionPercent = 0, surveyorChance = 0;
+    let momentumChance = 0, abundanceBonus = 0;
+
+    // --- CLAN PERK INTEGRATION ---
+    let clan = null;
+    if (account.clanId) {
+        clan = await getClanById(account.clanId);
+        if (clan) {
+            if (clan.level >= 10) abundanceBonus = 5;
+            else if (clan.level >= 9) abundanceBonus = 2;
+            else if (clan.level >= 6) abundanceBonus = 1;
+
+            if (clan.level >= 7) momentumChance = 5;
+            else if (clan.level >= 3) momentumChance = 2.5;
+        }
+    }
+    // --- END CLAN PERK INTEGRATION ---
 
     if (account.traits) {
         getActiveTraits(account, 'prodigy').forEach(t => cooldownReductionPercent += 5 * t.level);
         getActiveTraits(account, 'surveyor').forEach(t => surveyorChance += 2 * t.level);
-        const zealotTraits = getActiveTraits(account, 'zealot');
-        if (zealotTraits.length > 0) {
-            const zealotLevel = zealotTraits[0].level;
-            zealBonusPerStack = 2.5 * zealotLevel;
-            if (account.zeal && (now - account.zeal.lastAction) < 10 * 60 * 1000) {
-                zealStacks = Math.min(10, (account.zeal.stacks || 0) + 1);
-            } else {
-                zealStacks = 1;
-            }
-        }
     }
 
     let currentCooldown = baseCooldown * (1 - cooldownReductionPercent / 100);
-    let activeBuffs = (account.activeBuffs || []).filter(buff => buff.expiresAt > now);
-    if (activeBuffs.length < (account.activeBuffs || []).length) {
-        await updateAccount(account._id, { activeBuffs });
-    }
-    for (const buff of activeBuffs) {
-        const itemDef = ITEMS[buff.itemId];
-        if (itemDef?.buff?.effects?.gather_cooldown_reduction_ms) currentCooldown -= itemDef.buff.effects.gather_cooldown_reduction_ms;
-    }
-
+    
     currentCooldown = Math.max(MINIMUM_ACTION_COOLDOWN_MS, currentCooldown);
 
-    if (account.lastGather && (now - account.lastGather) < currentCooldown) {
+    const cooldownReset = Math.random() * 100 < momentumChance;
+    if (!cooldownReset && account.lastGather && (now - account.lastGather) < currentCooldown) {
         return { success: false, message: `You are tired. Wait **${formatDuration((currentCooldown - (now - account.lastGather)) / 1000)}**.` };
     }
+    
     const basketCount = account.inventory['gathering_basket'] || 0;
     const maxTypes = MAX_GATHER_TYPES_BASE + basketCount;
     let gatheredItems = [];
     let updates = {};
     const shuffledItems = Object.keys(GATHER_TABLE).sort(() => 0.5 - secureRandomFloat());
-    const currentGlobalEvent = getCurrentGlobalEvent();
 
     for (const itemId of shuffledItems) {
         if (gatheredItems.length >= maxTypes) break;
         let chance = GATHER_TABLE[itemId].baseChance;
-        if (currentGlobalEvent?.effect.type === 'gather_chance') {
-            chance *= currentGlobalEvent.effect.multiplier;
-        }
-        if (currentGlobalEvent?.effect.type === 'gather_rare_chance' && currentGlobalEvent.effect.item === itemId) {
-            chance *= currentGlobalEvent.effect.multiplier;
-        }
-        if (zealStacks > 0) chance *= (1 + (zealStacks * zealBonusPerStack / 100));
-
         if (secureRandomFloat() < chance) {
             let baseQty = Math.floor(secureRandomFloat() * (GATHER_TABLE[itemId].maxQty - GATHER_TABLE[itemId].minQty + 1)) + GATHER_TABLE[itemId].minQty;
             let bonusQty = 0;
             for (let i = 0; i < basketCount; i++) if (secureRandomFloat() < 0.5) bonusQty++;
-            const finalQty = baseQty + bonusQty;
+            const finalQty = baseQty + bonusQty + abundanceBonus;
             updates[`inventory.${itemId}`] = (updates[`inventory.${itemId}`] || 0) + finalQty;
-            const bonusText = bonusQty > 0 ? ` (+${bonusQty} bonus)` : '';
-            gatheredItems.push({ id: itemId, qty: finalQty, text: `> ${ITEMS[itemId].emoji} **${finalQty}x** ${ITEMS[itemId].name}${bonusText}` });
+            const bonusText = bonusQty > 0 ? ` (+${bonusQty} basket)` : '';
+            const clanBonusText = abundanceBonus > 0 ? ` (+${abundanceBonus} clan)` : '';
+            gatheredItems.push({ id: itemId, qty: finalQty, text: `> ${ITEMS[itemId].emoji} **${finalQty}x** ${ITEMS[itemId].name}${bonusText}${clanBonusText}` });
         }
+    }
+    
+    let setUpdates = {};
+    if (!cooldownReset) {
+        setUpdates.lastGather = now;
     }
 
     if (Object.keys(updates).length === 0) {
-        await updateAccount(account._id, { lastGather: now, 'zeal.stacks': zealStacks, 'zeal.lastAction': now });
-        return { success: true, message: 'You searched but found nothing of value.' };
+        await updateAccount(account._id, setUpdates);
+        let msg = 'You searched but found nothing of value.';
+        if (cooldownReset) msg += `\n> ✨ Your clan's **Momentum** perk reset your cooldown!`;
+        return { success: true, message: msg };
     }
-
-    let surveyorDoubled = false;
-    if (surveyorChance > 0 && secureRandomFloat() * 100 < surveyorChance) {
-        surveyorDoubled = true;
-        for (const item of gatheredItems) {
-            updates[`inventory.${item.id}`] = (updates[`inventory.${item.id}`] || 0) + item.qty;
+    
+    await economyCollection.updateOne({ _id: account._id }, { $inc: updates, $set: setUpdates });
+    let message = `You gathered:\n${gatheredItems.map(i => i.text).join('\n')}`;
+    if (cooldownReset) message += `\n> ✨ Your clan's **Momentum** perk reset your cooldown!`;
+    
+    // --- CLAN WAR INTEGRATION ---
+    if (clan) {
+        const warState = await getServerStateCollection().findOne({ stateKey: "clan_war" });
+        if (warState && new Date() < warState.warEndTime) {
+            await getClansCollection().updateOne({ _id: clan._id }, { $inc: { warPoints: 1 } });
         }
     }
+    // --- END CLAN WAR INTEGRATION ---
 
-    await economyCollection.updateOne({ _id: account._id }, { $inc: updates, $set: { lastGather: now, 'zeal.stacks': zealStacks, 'zeal.lastAction': now } });
-    let message = `You gathered:\n${gatheredItems.map(i => i.text).join('\n')}`;
-    if (surveyorDoubled) message += `\n\n**A stroke of luck! Your Surveyor trait doubled the entire haul!**`;
-    if (currentGlobalEvent && (currentGlobalEvent.effect.type === 'gather_chance' || currentGlobalEvent.effect.type === 'gather_rare_chance')) {
-        message += `\n*(${currentGlobalEvent.name} is active!)*`;
-    }
     return { success: true, message: message };
 }
 
@@ -559,7 +557,16 @@ async function handleFlip(account, amount, choice) {
     }
 }
 
+// --- MODIFIED ---
 async function handleSlots(account, amount) {
+    let maxBet = SLOTS_MAX_BET;
+    if (account.clanId) {
+        const clan = await getClanById(account.clanId);
+        if (clan && clan.level >= 5) {
+            maxBet = SLOTS_MAX_BET * 2;
+        }
+    }
+    
     const economyCollection = getEconomyCollection();
     const now = Date.now();
     const cooldown = SLOTS_COOLDOWN_SECONDS * 1000;
@@ -567,8 +574,8 @@ async function handleSlots(account, amount) {
         return { success: false, message: `Slow down! Wait **${formatDuration((cooldown - (now - account.lastSlots)) / 1000)}**.` };
     }
 
-    if (isNaN(amount) || amount < SLOTS_MIN_BET || amount > SLOTS_MAX_BET) {
-        return { success: false, message: `Your bet must be between **${SLOTS_MIN_BET}** and **${SLOTS_MAX_BET}** ${CURRENCY_NAME}.` };
+    if (isNaN(amount) || amount < SLOTS_MIN_BET || amount > maxBet) {
+        return { success: false, message: `Your bet must be between **${SLOTS_MIN_BET}** and **${maxBet}** ${CURRENCY_NAME}.` };
     }
     const preLossBalance = account.balance;
     if (preLossBalance < amount) {
@@ -858,6 +865,32 @@ async function handleMarket(filter = null) {
     return { success: true, lines: formattedLines };
 }
 
+// --- NEW ---
+async function handleClanWar() {
+    const clans = getClansCollection();
+    const serverState = getServerStateCollection();
+    const warState = await serverState.findOne({ stateKey: "clan_war" });
+
+    if (!warState || new Date() > warState.warEndTime) {
+        return { success: false, message: "There is no clan war currently active." };
+    }
+
+    const topClans = await clans.find({ warPoints: { $gt: 0 } }).sort({ warPoints: -1 }).limit(10).toArray();
+
+    if (topClans.length === 0) {
+        return { success: true, message: "The clan war is active, but no clan has scored any points yet!" };
+    }
+
+    const timeLeft = formatDuration((warState.warEndTime.getTime() - Date.now()) / 1000);
+    const header = `**Clan War: The Endless Conflict**\n\`----Time left: ${timeLeft}------\``;
+    const medals = ['🏆', '🥈', '🥉'];
+    const lines = topClans.map((clan, index) => {
+        const medal = index < 3 ? `${medals[index]} ` : '';
+        return `\`#${index + 1}.\` ${medal}\`[${clan.tag}] ${clan.name}\` - **${clan.warPoints.toLocaleString()}** Points`;
+    });
+    return { success: true, message: `${header}\n${lines.join('\n')}` };
+}
+
 module.exports = {
     handleItemInfo,
     handleRecipes,
@@ -877,4 +910,5 @@ module.exports = {
     handleInventory,
     handleLeaderboard,
     handleMarket,
+    handleClanWar, // <-- NEW
 };
