@@ -142,81 +142,73 @@ async function processGlobalEventTick(client) {
 async function processClanWarTick(client) {
     try {
         const serverStateCollection = getServerStateCollection();
-        const clansCollection = getClansCollection();
-        const economyCollection = getEconomyCollection();
+        if (!serverStateCollection) {
+            console.error("[CRITICAL CLAN WAR ERROR] serverStateCollection is not available.");
+            return;
+        }
 
         let state = await serverStateCollection.findOne({ stateKey: "clan_war" });
 
-        // --- STAGE 1: VALIDATE OR INITIALIZE STATE ---
-        // This block ensures that by the end of it, 'state' is a valid object with a valid Date.
-        if (!state || !state.warEndTime || !(state.warEndTime instanceof Date)) {
-            const reason = !state ? "No state found" : "State was incomplete/invalid";
+        // STAGE 1: VALIDATE OR INITIALIZE STATE
+        if (!state || !state.warEndTime || !(new Date(state.warEndTime).valueOf() > 0)) {
+            const reason = !state ? "No state doc" : "State doc invalid";
             console.log(`[CLAN WAR] Initializing/Resetting war. Reason: ${reason}.`);
             
             const newEndTime = new Date(Date.now() + CLAN_WAR_DURATION_DAYS * 24 * 60 * 60 * 1000);
             
-            // Use findOneAndUpdate to ensure we get the updated document back correctly.
             const updateResult = await serverStateCollection.findOneAndUpdate(
                 { stateKey: "clan_war" },
                 { $set: { warEndTime: newEndTime } },
                 { upsert: true, returnDocument: 'after' }
             );
-
-            // In some driver versions, the returned value is the document itself.
-            // We'll re-assign `state` to be this new, guaranteed-to-be-correct document.
-            state = updateResult;
-
-            // This is the most important safeguard. If the DB operation failed or returned
-            // something unexpected, we abort the tick entirely to prevent a crash.
-            if (!state || !state.warEndTime || !(state.warEndTime instanceof Date)) {
-                console.error("[CRITICAL CLAN WAR ERROR] Failed to create or retrieve a valid war state after update. Aborting tick to prevent crash.");
+            
+            if (!updateResult || !updateResult.warEndTime) {
+                console.error("[CRITICAL CLAN WAR ERROR] Failed to create or retrieve a valid war state after update. Aborting tick.");
                 return;
             }
             
-            console.log(`[CLAN WAR] War clock started successfully. Ends at: ${state.warEndTime.toISOString()}`);
-            return; // Exit this tick. The next tick will be a normal check.
+            console.log(`[CLAN WAR] War clock started successfully. Ends at: ${new Date(updateResult.warEndTime).toISOString()}`);
+            return;
         }
 
-        // --- STAGE 2: PROCESS THE WAR (only if state was valid from the start) ---
-        if (new Date() > state.warEndTime) {
+        // STAGE 2: PROCESS THE WAR
+        const endTime = new Date(state.warEndTime);
+        if (new Date() > endTime) {
             console.log("[CLAN WAR] War has ended. Processing rewards...");
-
+            const clansCollection = getClansCollection();
+            const economyCollection = getEconomyCollection();
+            
+            // ... (The rest of the reward logic is the same and should be correct)
             const winningClans = await clansCollection.find({ warPoints: { $gt: 0 } }).sort({ warPoints: -1 }).limit(3).toArray();
             if (winningClans.length > 0) {
-                const eventChannel = client.channels.cache.get(EVENT_CHANNEL_ID);
-                if (eventChannel) {
-                    const winnerDescriptions = winningClans.map((c, i) => {
-                        const medals = ['🏆', '🥈', '🥉'];
-                        return `${medals[i]} **[${c.tag}] ${c.name}** - ${c.warPoints.toLocaleString()} Points`;
-                    });
-                    const embed = new EmbedBuilder()
-                        .setColor('#FFD700')
-                        .setTitle('⚔️ Clan War Concluded! ⚔️')
-                        .setDescription(`The battle has ended! Here are the final standings:\n\n${winnerDescriptions.join('\n')}`)
-                        .setFooter({ text: "Rewards have been distributed to the members of the winning clans." });
-                    await eventChannel.send({ embeds: [embed] }).catch(console.error);
-                }
-
-                for (let i = 0; i < winningClans.length; i++) {
-                    const clan = winningClans[i];
-                    const rank = i + 1;
-                    const reward = CLAN_WAR_REWARDS[rank];
-                    if (reward && reward.items) {
-                        const members = await economyCollection.find({ clanId: clan._id }).toArray();
-                        for (const member of members) {
-                            for (const item of reward.items) {
-                                await modifyInventory(member._id, item.itemId, item.quantity);
-                            }
-                        }
-                    }
-                }
+                 const eventChannel = client.channels.cache.get(EVENT_CHANNEL_ID);
+                 if (eventChannel) {
+                     const winnerDescriptions = winningClans.map((c, i) => {
+                         const medals = ['🏆', '🥈', '🥉'];
+                         return `${medals[i]} **[${c.tag}] ${c.name}** - ${c.warPoints.toLocaleString()} Points`;
+                     });
+                     const embed = new EmbedBuilder().setColor('#FFD700').setTitle('⚔️ Clan War Concluded! ⚔️').setDescription(`The battle has ended! Here are the final standings:\n\n${winnerDescriptions.join('\n')}`).setFooter({ text: "Rewards have been distributed to the members of the winning clans." });
+                     await eventChannel.send({ embeds: [embed] }).catch(console.error);
+                 }
+                 for (let i = 0; i < winningClans.length; i++) {
+                     const clan = winningClans[i];
+                     const rank = i + 1;
+                     const reward = CLAN_WAR_REWARDS[rank];
+                     if (reward && reward.items) {
+                         const members = await economyCollection.find({ clanId: clan._id }).toArray();
+                         for (const member of members) {
+                             for (const item of reward.items) {
+                                 await modifyInventory(member._id, item.itemId, item.quantity);
+                             }
+                         }
+                     }
+                 }
             }
             
-            // Reset for the next war
             await clansCollection.updateMany({}, { $set: { warPoints: 0 } });
-            const newEndTime = new Date(Date.now() + CLAN_WAR_DURATION_DAYS * 24 * 60 * 60 * 1000);
-            await serverStateCollection.updateOne({ stateKey: "clan_war" }, { $set: { warEndTime: newEndTime } });
-            console.log(`[CLAN WAR] All clan points reset. New war started. Ends at: ${newEndTime.toISOString()}`);
+            const newEndTimeForReset = new Date(Date.now() + CLAN_WAR_DURATION_DAYS * 24 * 60 * 60 * 1000);
+            await serverStateCollection.updateOne({ stateKey: "clan_war" }, { $set: { warEndTime: newEndTimeForReset } });
+            console.log(`[CLAN WAR] All clan points reset. New war started. Ends at: ${newEndTimeForReset.toISOString()}`);
         }
     } catch (error) {
         console.error("[CRITICAL ERROR IN CLAN WAR TICKER]:", error);
