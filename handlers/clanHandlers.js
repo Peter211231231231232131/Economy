@@ -118,11 +118,14 @@ async function handleClanInfo(clanCode) {
     const clan = await getClan(clanCode);
     if (!clan) { return { success: false, message: "No clan found with that code." }; }
 
+    // Use the now more robust getAccount function
     const ownerAccount = await getAccount(clan.ownerId);
-    const ownerName = ownerAccount?.drednotName || ownerAccount?.displayName || 'Unknown';
+    const ownerName = ownerAccount?.drednotName || ownerAccount?.displayName || 'Unknown Leader'; // More descriptive fallback
 
     const nextLevelInfo = CLAN_LEVELS.find(l => l.level === clan.level + 1);
-    const progressText = nextLevelInfo ? `Vault: ${clan.vaultBalance.toLocaleString()} / ${nextLevelInfo.cost.toLocaleString()} to Level ${nextLevelInfo.level}` : 'Max Level Reached';
+    const progressText = nextLevelInfo 
+        ? `Vault: ${clan.vaultBalance.toLocaleString()} / ${nextLevelInfo.cost.toLocaleString()} to Level ${nextLevelInfo.level}` 
+        : 'Max Level Reached';
     
     const status = clan.recruitment === 1 ? 'Open' : 'Closed';
     
@@ -130,21 +133,38 @@ async function handleClanInfo(clanCode) {
     if (!economyCollection) {
         return { success: false, message: "Database connection is not ready. Please try again in a moment." };
     }
-    const memberAccounts = await economyCollection.find({ _id: { $in: clan.members } }).toArray();
-    const memberNames = memberAccounts.map(m => m.drednotName || m.displayName || 'Unnamed Member').join(', ');
 
-    const info = [
-        `**${clan.name}** [Lv ${clan.level}]`,
-        `> **Code:** \`{${clan.code}}\``,
-        `> **Leader:** ${ownerName}`,
-        `> **Recruitment:** ${status}`,
-        `> **Members:** ${clan.members.length}/${CLAN_MEMBER_LIMIT}`,
-        `> **Progress:** ${progressText}`,
-        `> **Members:** ${memberNames}`
-    ];
-    return { success: true, message: info.join('\n') };
+    // --- FIX: Make the member query case-insensitive ---
+    // Create a case-insensitive regex for each member ID
+    const memberIdRegexes = clan.members.map(id => new RegExp(`^${id}$`, 'i'));
+    const memberAccounts = await economyCollection.find({ _id: { $in: memberIdRegexes } }).toArray();
+    // --- END FIX ---
+
+    // Create a map for quick lookups to preserve order
+    const memberMap = new Map(memberAccounts.map(acc => [acc._id.toLowerCase(), acc]));
+
+    // Display members in their original order, falling back gracefully
+    const memberList = clan.members.map(id => {
+        const memberAccount = memberMap.get(id.toLowerCase());
+        const name = memberAccount ? (memberAccount.drednotName || memberAccount.displayName || 'Unnamed Member') : 'Missing Member Data';
+        return memberAccount?._id === clan.ownerId ? `👑 ${name}` : `- ${name}`;
+    }).join('\n');
+
+    // Return an object that can be used to build an embed
+    return {
+        success: true,
+        embedData: {
+            title: `${clan.name} [Lv ${clan.level}]`,
+            description: `**Code:** \`{${clan.code}}\`\n**Leader:** ${ownerName}`,
+            fields: [
+                { name: 'Recruitment', value: status, inline: true },
+                { name: 'Members', value: `${clan.members.length}/${CLAN_MEMBER_LIMIT}`, inline: true },
+                { name: 'Progress', value: progressText, inline: false },
+                { name: 'Roster', value: memberList.length > 0 ? memberList : "No members found.", inline: false },
+            ]
+        }
+    };
 }
-
 async function handleClanList() {
     const clans = getClansCollection();
     const availableClans = await clans.find({ [`members.${CLAN_MEMBER_LIMIT - 1}`]: { $exists: false } }).toArray();
