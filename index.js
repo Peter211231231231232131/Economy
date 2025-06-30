@@ -7,7 +7,7 @@ const express = require('express');
 // --- Local Module Imports ---
 const { connectToDatabase } = require('./utils/database');
 const { handleSlashCommand } = require('./handlers/slashHandler');
-const { handleApiCommand } = require('./handlers/apiHandler.js');
+const { handleApiCommand } = require('./handlers/apiHandler');
 const { startTickingProcesses } = require('./utils/tickers');
 
 // =========================================================================
