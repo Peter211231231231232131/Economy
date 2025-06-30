@@ -16,25 +16,20 @@ async function getClanById(clanId) {
     return await clans.findOne({ _id: clanId });
 }
 
-// --- CORE CLAN ACTIONS ---
-
-async function handleClanCreate(account, clanName, clanTag) {
+// --- REPLACE THIS ENTIRE FUNCTION ---
+async function handleClanCreate(account, clanName) { // <-- Removed clanTag from parameters
     if (account.clanId) {
         return { success: false, message: "You are already in a clan." };
     }
     if (!clanName || clanName.length < 3 || clanName.length > 24) {
         return { success: false, message: "Clan name must be between 3 and 24 characters." };
     }
-    if (!clanTag || clanTag.length < 2 || clanTag.length > 5) {
-        return { success: false, message: "Clan tag must be between 2 and 5 characters." };
-    }
 
     const clans = getClansCollection();
-    const upperCaseTag = clanTag.toUpperCase();
 
-    const existingClan = await clans.findOne({ $or: [{ name: new RegExp(`^${clanName}$`, 'i') }, { tag: upperCaseTag }] });
+    const existingClan = await clans.findOne({ name: new RegExp(`^${clanName}$`, 'i') });
     if (existingClan) {
-        return { success: false, message: "A clan with that name or tag already exists." };
+        return { success: false, message: "A clan with that name already exists." };
     }
 
     let uniqueCode;
@@ -49,23 +44,22 @@ async function handleClanCreate(account, clanName, clanTag) {
 
     const newClan = {
         name: clanName,
-        tag: upperCaseTag,
         code: uniqueCode,
         ownerId: account._id,
         members: [account._id],
         level: 1,
         vaultBalance: 0,
         warPoints: 0,
-        recruitment: 1, // 1 for Open, 2 for Closed
-        applicants: [], // User IDs of those who applied
-        pendingInvites: [], // User IDs of those who were invited
+        recruitment: 1,
+        applicants: [],
+        pendingInvites: [],
         createdAt: new Date(),
     };
 
     const result = await clans.insertOne(newClan);
     await updateAccount(account._id, { clanId: result.insertedId });
 
-    return { success: true, message: `You have successfully founded the clan **${clanName} [${upperCaseTag}]**! Your unique clan code is \`{${uniqueCode}}\`. The clan is currently **Open** for anyone to join.` };
+    return { success: true, message: `You have successfully founded the clan **${clanName}**! Your unique clan code is \`{${uniqueCode}}\`. The clan is currently **Open** for anyone to join.` };
 }
 
 async function handleClanLeave(account) {
