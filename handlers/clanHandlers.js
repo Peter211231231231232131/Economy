@@ -1,7 +1,7 @@
 // /handlers/clanHandlers.js
 
 const { getClansCollection, getEconomyCollection } = require('../utils/database');
-const { getAccount, updateAccount, generateClanCode, formatDuration, toBoldFont } = require('../utils/utilities');
+const { getAccount, updateAccount, generateClanCode, formatDuration } = require('../utils/utilities');
 const { CLAN_LEVELS, CLAN_MEMBER_LIMIT, CLAN_JOIN_COOLDOWN_HOURS, CURRENCY_NAME } = require('../config');
 
 // --- HELPER FUNCTIONS ---
@@ -16,8 +16,9 @@ async function getClanById(clanId) {
     return await clans.findOne({ _id: clanId });
 }
 
-// --- REPLACE THIS ENTIRE FUNCTION ---
-async function handleClanCreate(account, clanName) { // <-- Removed clanTag from parameters
+// --- CORE CLAN ACTIONS ---
+
+async function handleClanCreate(account, clanName) {
     if (account.clanId) {
         return { success: false, message: "You are already in a clan." };
     }
@@ -50,7 +51,7 @@ async function handleClanCreate(account, clanName) { // <-- Removed clanTag from
         level: 1,
         vaultBalance: 0,
         warPoints: 0,
-        recruitment: 1,
+        recruitment: 1, // 1 for Open, 2 for Closed
         applicants: [],
         pendingInvites: [],
         createdAt: new Date(),
@@ -90,7 +91,7 @@ async function handleClanKick(account, targetAccount) {
     const clan = await getClanById(account.clanId);
     if (!clan) { return { success: false, message: "You are not in a valid clan." }; }
     if (clan.ownerId !== account._id) { return { success: false, message: "Only the clan owner can kick members." }; }
-    if (targetAccount.clanId?.toString() !== clan._id.toString()) { return { success: false, message: `**${targetAccount.drednotName || targetAccount.displayName}** is not in your clan.` }; }
+    if (!targetAccount || targetAccount.clanId?.toString() !== clan._id.toString()) { return { success: false, message: `That player is not in your clan.` }; }
     if (targetAccount._id === account._id) { return { success: false, message: "You cannot kick yourself." }; }
 
     const clans = getClansCollection();
@@ -133,7 +134,7 @@ async function handleClanInfo(clanCode) {
     const memberNames = memberAccounts.map(m => m.drednotName || m.displayName || 'Unnamed Member').join(', ');
 
     const info = [
-        `**${clan.name}** [Lv ${clan.level}]`, // <-- Removed tag
+        `**${clan.name}** [Lv ${clan.level}]`,
         `> **Code:** \`{${clan.code}}\``,
         `> **Leader:** ${ownerName}`,
         `> **Recruitment:** ${status}`,
@@ -144,42 +145,30 @@ async function handleClanInfo(clanCode) {
     return { success: true, message: info.join('\n') };
 }
 
-// --- REPLACE THIS ENTIRE FUNCTION ---
-async function handleClanInvite(account, targetAccount) {
+async function handleClanList() {
     const clans = getClansCollection();
-    
-    if (!targetAccount) {
-        if (account.clanId) { return { success: false, message: "You are already in a clan." }; }
-        const invitedClans = await clans.find({ pendingInvites: account._id }).toArray();
-        if (invitedClans.length === 0) {
-            return { success: false, message: "You have no pending clan invitations." };
-        }
-        // Updated format
-        const inviteList = invitedClans.map(c => `- **${c.name}** [Lv ${c.level}] \`{${c.code}}\``);
-        return { success: true, message: `You have pending invitations from:\n${inviteList.join('\n')}\nUse \`/clan accept <code>\` to join.` };
+    const availableClans = await clans.find({ [`members.${CLAN_MEMBER_LIMIT - 1}`]: { $exists: false } }).toArray();
+    if (availableClans.length === 0) {
+        return { success: false, lines: ["There are currently no clans with open slots."] };
     }
 
-    if (!account.clanId) { return { success: false, message: "You must be in a clan to invite players." }; }
+    const shuffled = availableClans.sort(() => 0.5 - Math.random());
+    const formattedLines = shuffled.map(clan => `**${clan.name}** [Lv ${clan.level}] \`{${clan.code}}\``);
+    return { success: true, lines: formattedLines };
+}
+
+async function handleClanRecruit(account, status) {
+    if (!account.clanId) { return { success: false, message: "You are not in a clan." }; }
     const clan = await getClanById(account.clanId);
     if (!clan) { return { success: false, message: "You are not in a valid clan." }; }
-    if (clan.ownerId !== account._id) { return { success: false, message: "Only the clan owner can manage invitations." }; }
-
-    if(targetAccount === 'view') {
-        if (clan.applicants.length === 0) {
-            return { success: false, message: "Your clan has no pending applications." };
-        }
-        const applicantAccounts = await getEconomyCollection().find({ _id: { $in: clan.applicants } }).toArray();
-        const applicantNames = applicantAccounts.map(a => a.drednotName || a.displayName || 'Unknown User');
-        return { success: true, message: `**Applicants:** ${applicantNames.join(', ')}\nUse \`/clan accept <username>\` to approve.` };
-    }
-
-    if (clan.members.length >= CLAN_MEMBER_LIMIT) { return { success: false, message: "Your clan is full." }; }
-    if (targetAccount.clanId) { return { success: false, message: `**${targetAccount.drednotName || targetAccount.displayName}** is already in a clan.` }; }
-    if(clan.pendingInvites.includes(targetAccount._id)) { return { success: false, message: "You have already invited that player." } }
-
-    await clans.updateOne({ _id: clan._id }, { $push: { pendingInvites: targetAccount._id } });
-    return { success: true, message: `An invitation has been sent to **${targetAccount.drednotName || targetAccount.displayName}**. They can see it by using \`/clan invite\`.` };
+    if (clan.ownerId !== account._id) { return { success: false, message: "Only the clan owner can change the recruitment status." }; }
+    const newStatus = parseInt(status, 10);
+    if (newStatus !== 1 && newStatus !== 2) { return { success: false, message: "Invalid status. Use 1 for Open or 2 for Closed." }; }
+    await getClansCollection().updateOne({ _id: clan._id }, { $set: { recruitment: newStatus } });
+    const statusText = newStatus === 1 ? 'OPEN' : 'CLOSED';
+    return { success: true, message: `Your clan's recruitment status has been set to **${statusText}**.` };
 }
+
 async function handleClanDonate(account, amount) {
     if (!account.clanId) { return { success: false, message: "You are not in a clan." }; }
     if (isNaN(amount) || amount <= 0) { return { success: false, message: "Please provide a valid, positive amount to donate." }; }
@@ -239,27 +228,23 @@ async function handleClanJoin(account, clanCode) {
 }
 
 async function handleClanInvite(account, targetAccount) {
-    // This function now has dual purpose
     const clans = getClansCollection();
     
-    // Case 1: Player checking their own invites
     if (!targetAccount) {
         if (account.clanId) { return { success: false, message: "You are already in a clan." }; }
         const invitedClans = await clans.find({ pendingInvites: account._id }).toArray();
         if (invitedClans.length === 0) {
             return { success: false, message: "You have no pending clan invitations." };
         }
-        const inviteList = invitedClans.map(c => `- **${c.name}** [${c.tag}] \`{${c.code}}\``);
+        const inviteList = invitedClans.map(c => `- **${c.name}** [Lv ${c.level}] \`{${c.code}}\``);
         return { success: true, message: `You have pending invitations from:\n${inviteList.join('\n')}\nUse \`/clan accept <code>\` to join.` };
     }
 
-    // Case 2: Clan owner viewing applicants or inviting a player
     if (!account.clanId) { return { success: false, message: "You must be in a clan to invite players." }; }
     const clan = await getClanById(account.clanId);
     if (!clan) { return { success: false, message: "You are not in a valid clan." }; }
     if (clan.ownerId !== account._id) { return { success: false, message: "Only the clan owner can manage invitations." }; }
 
-    // Owner viewing applicants
     if(targetAccount === 'view') {
         if (clan.applicants.length === 0) {
             return { success: false, message: "Your clan has no pending applications." };
@@ -269,7 +254,6 @@ async function handleClanInvite(account, targetAccount) {
         return { success: true, message: `**Applicants:** ${applicantNames.join(', ')}\nUse \`/clan accept <username>\` to approve.` };
     }
 
-    // Owner inviting a player
     if (clan.members.length >= CLAN_MEMBER_LIMIT) { return { success: false, message: "Your clan is full." }; }
     if (targetAccount.clanId) { return { success: false, message: `**${targetAccount.drednotName || targetAccount.displayName}** is already in a clan.` }; }
     if(clan.pendingInvites.includes(targetAccount._id)) { return { success: false, message: "You have already invited that player." } }
@@ -289,7 +273,7 @@ async function handleClanAccept(account, identifier) {
         if (!clan.pendingInvites.includes(account._id)) { return { success: false, message: "You have not been invited to this clan." }; }
         if (clan.members.length >= CLAN_MEMBER_LIMIT) { return { success: false, message: "That clan is now full." }; }
 
-        await clans.updateMany({}, { $pull: { pendingInvites: account._id, applicants: account._id } }); // Clear all other invites/apps
+        await clans.updateMany({}, { $pull: { pendingInvites: account._id, applicants: account._id } });
         await clans.updateOne({ _id: clan._id }, { $push: { members: account._id } });
         await updateAccount(account._id, { clanId: clan._id });
         return { success: true, message: `You have accepted the invitation and joined **${clan.name}**!` };
@@ -297,9 +281,10 @@ async function handleClanAccept(account, identifier) {
 
     // Case 2: Clan owner accepting an applicant via username
     const clan = await getClanById(account.clanId);
-    const targetAccount = await getAccount(identifier);
     if (!clan) { return { success: false, message: "You are not in a clan." }; }
     if (clan.ownerId !== account._id) { return { success: false, message: "Only the clan owner can accept applications." }; }
+    
+    const targetAccount = await getAccount(identifier);
     if (!targetAccount) { return { success: false, message: `Could not find a player named "${identifier}".` }; }
     if (!clan.applicants.includes(targetAccount._id)) { return { success: false, message: `That player has not applied to your clan.` }; }
     if (clan.members.length >= CLAN_MEMBER_LIMIT) { return { success: false, message: "Your clan is full." }; }
@@ -328,7 +313,6 @@ async function handleClanDecline(account, clanCode) {
     }
 }
 
-
 module.exports = {
     getClan,
     getClanById,
@@ -339,7 +323,6 @@ module.exports = {
     handleClanInfo,
     handleClanList,
     handleClanRecruit,
-    getClanById,
     handleClanDonate,
     handleClanUpgrade,
     handleClanJoin,
