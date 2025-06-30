@@ -91,8 +91,7 @@ async function handleSlashCommand(interaction) {
                 switch (sub) {
                     case 'create':
                         const clanName = options.getString('name');
-                        const clanTag = options.getString('tag');
-                        clanResult = await clanHandlers.handleClanCreate(account, clanName, clanTag);
+                        clanResult = await clanHandlers.handleClanCreate(account, clanName);
                         break;
                     case 'leave':
                         clanResult = await clanHandlers.handleClanLeave(account);
