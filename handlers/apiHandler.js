@@ -84,9 +84,9 @@ async function handleApiCommand(req, res) {
 
             switch (subCommand) {
                 case 'create':
-                    if (clanArgs.length < 2) { clanResult = { message: "Usage: !clan create <name> <tag>" }; break; }
-                    const [clanName, clanTag] = [clanArgs.slice(0, -1).join(' '), clanArgs[clanArgs.length - 1]];
-                    clanResult = await clanHandlers.handleClanCreate(account, clanName, clanTag);
+                    if (clanArgs.length < 1) { clanResult = { message: "Usage: !clan create <name>" }; break; }
+                    const clanNameOnly = clanArgs.join(' ');
+                    clanResult = await clanHandlers.handleClanCreate(account, clanNameOnly);
                     break;
                 case 'leave': clanResult = await clanHandlers.handleClanLeave(account); break;
                 case 'disband': clanResult = await clanHandlers.handleClanDisband(account); break;
