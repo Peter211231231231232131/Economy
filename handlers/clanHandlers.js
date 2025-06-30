@@ -144,32 +144,42 @@ async function handleClanInfo(clanCode) {
     return { success: true, message: info.join('\n') };
 }
 
-async function handleClanList() {
+// --- REPLACE THIS ENTIRE FUNCTION ---
+async function handleClanInvite(account, targetAccount) {
     const clans = getClansCollection();
-    const availableClans = await clans.find({ 'members.9': { $exists: false } }).toArray();
-    if (availableClans.length === 0) {
-        return { success: false, lines: ["There are currently no clans with open slots."] };
+    
+    if (!targetAccount) {
+        if (account.clanId) { return { success: false, message: "You are already in a clan." }; }
+        const invitedClans = await clans.find({ pendingInvites: account._id }).toArray();
+        if (invitedClans.length === 0) {
+            return { success: false, message: "You have no pending clan invitations." };
+        }
+        // Updated format
+        const inviteList = invitedClans.map(c => `- **${c.name}** [Lv ${c.level}] \`{${c.code}}\``);
+        return { success: true, message: `You have pending invitations from:\n${inviteList.join('\n')}\nUse \`/clan accept <code>\` to join.` };
     }
 
-    const shuffled = availableClans.sort(() => 0.5 - Math.random());
-    // Updated format to "Clan Name [Lv #] {code}"
-    const formattedLines = shuffled.map(clan => `**${clan.name}** [Lv ${clan.level}] \`{${clan.code}}\``);
-    return { success: true, lines: formattedLines };
-}
-async function handleClanRecruit(account, status) {
-    if (!account.clanId) { return { success: false, message: "You are not in a clan." }; }
+    if (!account.clanId) { return { success: false, message: "You must be in a clan to invite players." }; }
     const clan = await getClanById(account.clanId);
     if (!clan) { return { success: false, message: "You are not in a valid clan." }; }
-    if (clan.ownerId !== account._id) { return { success: false, message: "Only the clan owner can change the recruitment status." }; }
+    if (clan.ownerId !== account._id) { return { success: false, message: "Only the clan owner can manage invitations." }; }
 
-    const newStatus = parseInt(status, 10);
-    if (newStatus !== 1 && newStatus !== 2) { return { success: false, message: "Invalid status. Use 1 for Open or 2 for Closed." }; }
+    if(targetAccount === 'view') {
+        if (clan.applicants.length === 0) {
+            return { success: false, message: "Your clan has no pending applications." };
+        }
+        const applicantAccounts = await getEconomyCollection().find({ _id: { $in: clan.applicants } }).toArray();
+        const applicantNames = applicantAccounts.map(a => a.drednotName || a.displayName || 'Unknown User');
+        return { success: true, message: `**Applicants:** ${applicantNames.join(', ')}\nUse \`/clan accept <username>\` to approve.` };
+    }
 
-    await getClansCollection().updateOne({ _id: clan._id }, { $set: { recruitment: newStatus } });
-    const statusText = newStatus === 1 ? 'OPEN' : 'CLOSED';
-    return { success: true, message: `Your clan's recruitment status has been set to **${statusText}**.` };
+    if (clan.members.length >= CLAN_MEMBER_LIMIT) { return { success: false, message: "Your clan is full." }; }
+    if (targetAccount.clanId) { return { success: false, message: `**${targetAccount.drednotName || targetAccount.displayName}** is already in a clan.` }; }
+    if(clan.pendingInvites.includes(targetAccount._id)) { return { success: false, message: "You have already invited that player." } }
+
+    await clans.updateOne({ _id: clan._id }, { $push: { pendingInvites: targetAccount._id } });
+    return { success: true, message: `An invitation has been sent to **${targetAccount.drednotName || targetAccount.displayName}**. They can see it by using \`/clan invite\`.` };
 }
-
 async function handleClanDonate(account, amount) {
     if (!account.clanId) { return { success: false, message: "You are not in a clan." }; }
     if (isNaN(amount) || amount <= 0) { return { success: false, message: "Please provide a valid, positive amount to donate." }; }
