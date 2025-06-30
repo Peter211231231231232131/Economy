@@ -1,6 +1,7 @@
 // /handlers/apiHandler.js
 
 const commandHandlers = require('./commandHandlers');
+const clanHandlers = require('./clanHandlers');
 const { getAccount, createNewAccount, selfHealAccount, getPaginatedResponse, toBoldFont, getItemIdByName, modifyInventory, findNextAvailableListingId } = require('../utils/utilities');
 const { getEconomyCollection, getVerificationsCollection, getMarketCollection, getLootboxCollection } = require('../utils/database');
 const { CURRENCY_NAME, STARTING_BALANCE, DISCORD_INVITE_LINK, ITEMS, TRAITS, MARKET_TAX_RATE, LOOTBOXES } = require('../config');
@@ -36,12 +37,11 @@ async function handleApiCommand(req, res) {
             } else {
                 const mergeResult = await commandHandlers.handleAccountMerge(verificationData.discordId, verificationData.drednotName);
                 responseMessage = mergeResult.message;
-                // We won't try to DM from here to keep concerns separate. The slash handler handles Discord interaction.
             }
             return res.json({ reply: responseMessage });
         }
 
-        const { userPaginationData } = require('../utils/utilities'); // re-require for current state
+        const { userPaginationData } = require('../utils/utilities');
         if (['n', 'next', 'p', 'previous'].includes(command)) {
             const session = userPaginationData[identifier];
             if (!session) return res.json({ reply: 'You have no active list to navigate.' });
@@ -70,8 +70,80 @@ async function handleApiCommand(req, res) {
             processedText = processedText.replace(/\*\*([^*]+)\*\*/g, (match, p1) => toBoldFont(p1));
             return processedText.replace(/`|>/g, '').replace(/<a?:.+?:\d+>/g, '').replace(/<:[a-zA-Z0-9_]+:[0-9]+>/g, '');
         };
-
         let result;
+
+        // --- NEW: API CLAN COMMAND ROUTER ---
+        if (command === 'clan') {
+            const subCommand = args[0]?.toLowerCase() || 'help';
+            const clanArgs = args.slice(1);
+            let clanResult;
+
+            switch (subCommand) {
+                case 'create':
+                    if (clanArgs.length < 2) { clanResult = { message: "Usage: !clan create <name> <tag>" }; break; }
+                    const [clanName, clanTag] = [clanArgs.slice(0, -1).join(' '), clanArgs[clanArgs.length - 1]];
+                    clanResult = await clanHandlers.handleClanCreate(account, clanName, clanTag);
+                    break;
+                case 'leave': clanResult = await clanHandlers.handleClanLeave(account); break;
+                case 'disband': clanResult = await clanHandlers.handleClanDisband(account); break;
+                case 'kick':
+                    if (!clanArgs[0]) { clanResult = { message: "Usage: !clan kick <username>" }; break; }
+                    const targetAccKick = await getAccount(clanArgs.join(' '));
+                    if (!targetAccKick) clanResult = { message: "Player not found." };
+                    else clanResult = await clanHandlers.handleClanKick(account, targetAccKick);
+                    break;
+                case 'recruit':
+                    if (!clanArgs[0]) { clanResult = { message: "Usage: !clan recruit <1 for Open|2 for Closed>" }; break; }
+                    clanResult = await clanHandlers.handleClanRecruit(account, clanArgs[0]);
+                    break;
+                case 'upgrade': clanResult = await clanHandlers.handleClanUpgrade(account); break;
+                case 'donate':
+                    const amount = parseInt(clanArgs[0], 10);
+                    clanResult = await clanHandlers.handleClanDonate(account, amount);
+                    break;
+                case 'info':
+                    if (!clanArgs[0]) { clanResult = { message: "Usage: !clan info <code>" }; break; }
+                    clanResult = await clanHandlers.handleClanInfo(clanArgs[0]);
+                    break;
+                case 'list':
+                    clanResult = await clanHandlers.handleClanList();
+                    if (clanResult.success) {
+                        const paginated = getPaginatedResponse(identifier, 'clan_list', clanResult.lines, 'Clan Browser', 0);
+                        return res.json({ reply: paginated.game.map(line => cleanText(line)) });
+                    }
+                    break;
+                case 'war':
+                    clanResult = await commandHandlers.handleClanWar();
+                    break;
+                case 'join':
+                    if (!clanArgs[0]) { clanResult = { message: "Usage: !clan join <code>" }; break; }
+                    clanResult = await clanHandlers.handleClanJoin(account, clanArgs[0]);
+                    break;
+                case 'invite':
+                    const targetName = clanArgs.join(' ');
+                    if (targetName) {
+                        const targetAccInv = await getAccount(targetName);
+                        if (!targetAccInv) clanResult = { message: "Player not found." };
+                        else clanResult = await clanHandlers.handleClanInvite(account, targetAccInv);
+                    } else {
+                        clanResult = await clanHandlers.handleClanInvite(account, account.clanId ? 'view' : null);
+                    }
+                    break;
+                case 'accept':
+                    if (!clanArgs[0]) { clanResult = { message: "Usage: !clan accept <username_or_code>" }; break; }
+                    clanResult = await clanHandlers.handleClanAccept(account, clanArgs[0]);
+                    break;
+                case 'decline':
+                    if (!clanArgs[0]) { clanResult = { message: "Usage: !clan decline <code>" }; break; }
+                    clanResult = await clanHandlers.handleClanDecline(account, clanArgs[0]);
+                    break;
+                default:
+                     clanResult = { message: `Unknown clan command. Use !clan list, !clan info, etc.` };
+            }
+            responseMessage = clanResult.message || (clanResult.lines ? clanResult.lines.join('\n') : 'An error occurred.');
+            return res.json({ reply: cleanText(responseMessage) });
+        }
+        // --- END API CLAN COMMAND ROUTER ---
 
         switch (command) {
             case 'info':
@@ -79,33 +151,27 @@ async function handleApiCommand(req, res) {
                 const name = args.join(' ');
                 const itemId = getItemIdByName(name);
                 const traitId = Object.keys(TRAITS).find(k => TRAITS[k].name.toLowerCase() === name.toLowerCase());
-                if (itemId) {
-                    responseMessage = cleanText(commandHandlers.handleItemInfo(itemId));
-                } else if (traitId) {
+                if (itemId) { responseMessage = cleanText(commandHandlers.handleItemInfo(itemId)); } 
+                else if (traitId) {
                     const trait = TRAITS[traitId];
                     let effectText = '';
                     switch (traitId) { case 'scavenger': effectText = `Grants a 5% chance per level to find bonus resources from /work.`; break; case 'prodigy': effectText = `Reduces /work and /gather cooldowns by 5% per level.`; break; case 'wealth': effectText = `Increases Bits earned from /work by 5% per level.`; break; case 'surveyor': effectText = `Grants a 2% chance per level to double your entire haul from /gather.`; break; case 'collector': effectText = `Increases the bonus reward for first-time crafts by 20% per level.`; break; case 'the_addict': effectText = `After losing a gamble, boosts your next /work by a % based on wealth lost, multiplied by 50% per level.`; break; case 'zealot': effectText = `Each 'Zeal' stack boosts rewards by 2.5% per level. Stacks decay after 10 minutes.`; break; default: effectText = trait.description.replace(/{.*?}/g, '...'); }
                     responseMessage = [`Trait: ${trait.name} (${trait.rarity})`, effectText, `Max Level: ${trait.maxLevel}`].join('\n');
-                } else {
-                    responseMessage = `Could not find an item or trait named "${name}".`;
-                }
+                } else { responseMessage = `Could not find an item or trait named "${name}".`; }
                 break;
             case 'traits':
                 let traitMessage = `Your Traits:\n`;
                 if (account.traits && account.traits.slots) {
                     for (const trait of account.traits.slots) { const t = TRAITS[trait.name]; traitMessage += `> ${t.name} (Level ${trait.level}) - ${t.rarity}\n`; }
-                } else {
-                    traitMessage = "You have no traits yet.";
-                }
+                } else { traitMessage = "You have no traits yet."; }
                 responseMessage = cleanText(traitMessage);
                 break;
             case 'traitroll':
                 if ((account.inventory['trait_reforger'] || 0) < 1) { responseMessage = `You need a Trait Reforger to do this.`; }
                 else {
                     await modifyInventory(username, 'trait_reforger', -1);
-                    const { rollNewTrait } = require('../utils/utilities');
                     const newTraits = [rollNewTrait(), rollNewTrait()];
-                    await require('../utils/utilities').updateAccount(account._id, { 'traits.slots': newTraits });
+                    await updateAccount(account._id, { 'traits.slots': newTraits });
                     let rollMessage = `You consumed a Trait Reforger and received:\n`;
                     for (const trait of newTraits) { const t = TRAITS[trait.name]; rollMessage += `> ${t.name} (Level ${trait.level}) - ${t.rarity}\n`; }
                     responseMessage = cleanText(rollMessage);
@@ -315,6 +381,5 @@ async function handleApiCommand(req, res) {
         res.status(500).json({ reply: "An internal server error occurred." });
     }
 }
-
 
 module.exports = { handleApiCommand };
