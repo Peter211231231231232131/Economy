@@ -25,9 +25,18 @@ function secureRandomFloat() {
 }
 
 async function getAccount(identifier) {
-    const idStr = String(identifier).toLowerCase();
+    if (!identifier) return null; // Prevent errors if identifier is null/undefined
     const economyCollection = getEconomyCollection();
-    return await economyCollection.findOne({ $or: [{ _id: idStr }, { discordId: String(identifier) }] });
+    const idStr = String(identifier);
+
+    // This query is more robust. It checks the lowercase _id, the original cased ID, and the discordId.
+    // The 'i' flag makes the regex search case-insensitive.
+    return await economyCollection.findOne({
+        $or: [
+            { _id: new RegExp(`^${idStr}$`, 'i') },
+            { discordId: idStr }
+        ]
+    });
 }
 
 async function createNewAccount(identifier, type = 'drednot') {
