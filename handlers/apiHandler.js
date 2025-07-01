@@ -168,7 +168,7 @@ async function handleApiCommand(req, res) {
                 else {
                     await modifyInventory(username, 'trait_reforger', -1);
                     const newTraits = [rollNewTrait(), rollNewTrait()];
-                    await updateAccount(account._id, { 'traits.slots': newTraits });
+                    await updateAccount(account._id, { traits: { slots: newTraits } });
                     let rollMessage = `You consumed a Trait Reforger and received:\n`;
                     for (const trait of newTraits) { const t = TRAITS[trait.name]; rollMessage += `> ${t.name} (Level ${trait.level}) - ${t.rarity}\n`; }
                     responseMessage = cleanText(rollMessage);
