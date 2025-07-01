@@ -1,5 +1,6 @@
 // /handlers/clanHandlers.js
 
+const { EmbedBuilder } = require('discord.js');
 const { getClansCollection, getEconomyCollection } = require('../utils/database');
 const { getAccount, updateAccount, generateClanCode, formatDuration } = require('../utils/utilities');
 const { CLAN_LEVELS, CLAN_MEMBER_LIMIT, CLAN_JOIN_COOLDOWN_HOURS, CURRENCY_NAME } = require('../config');
@@ -153,7 +154,7 @@ async function handleClanInfo(clanCode) {
     const embed = new EmbedBuilder()
         .setTitle(`${clan.name} [Lv ${clan.level}]`)
         .setColor('#3498DB')
-        .setDescription(`**Code:** `{${clan.code}}\`\n**Leader:** ${ownerName}`)
+        .setDescription(`**Code:** \`{${clan.code}}\`\n**Leader:** ${ownerName}`)
         .addFields(
             { name: 'Recruitment', value: status, inline: true },
             { name: 'Members', value: `${clan.members.length}/${CLAN_MEMBER_LIMIT}`, inline: true },
