@@ -45,7 +45,7 @@ async function createNewAccount(identifier, type = 'drednot') {
     const newAccount = {
         _id: idStr,
         drednotName: type === 'drednot' ? String(identifier) : null,
-        displayName: null,
+        displayName: String(identifier), // Ensure displayName is always set
         discordId: type === 'discord' ? String(identifier) : null,
         balance: STARTING_BALANCE,
         lastWork: null,
@@ -142,6 +142,7 @@ async function selfHealAccount(account) {
     let needsUpdate = false;
     if (!account.traits) { updates['traits'] = { slots: [rollNewTrait(), rollNewTrait()] }; needsUpdate = true; console.log(`[Self-Heal] Adding traits to old account: ${account._id}`); }
     if (!account.drednotName && !account.discordId) { updates['drednotName'] = account._id; needsUpdate = true; console.log(`[Self-Heal] Fixing drednotName for old account: ${account._id}`); }
+    if (account.displayName === undefined) { updates['displayName'] = account._id; needsUpdate = true; console.log(`[Self-Heal] Adding displayName to account: ${account._id}`); }
     if (account.dailyStreak === undefined) { updates['dailyStreak'] = 0; needsUpdate = true; console.log(`[Self-Heal] Adding dailyStreak to account: ${account._id}`); }
     if (account.lastHourly === undefined) { updates['lastHourly'] = null; needsUpdate = true; console.log(`[Self-Heal] Adding lastHourly to account: ${account._id}`); }
     if (account.hourlyStreak === undefined) { updates['hourlyStreak'] = 0; needsUpdate = true; console.log(`[Self-Heal] Adding hourlyStreak to account: ${account._id}`); }
