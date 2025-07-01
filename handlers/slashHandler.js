@@ -119,6 +119,14 @@ async function handleSlashCommand(interaction) {
                     case 'info':
                         const codeInfo = options.getString('code');
                         clanResult = await clanHandlers.handleClanInfo(codeInfo);
+                        if (clanResult.success && clanResult.embedData) {
+                            const infoEmbed = new EmbedBuilder()
+                                .setColor('#3498DB')
+                                .setTitle(clanResult.embedData.title)
+                                .setDescription(clanResult.embedData.description)
+                                .addFields(clanResult.embedData.fields);
+                            return interaction.editReply({ embeds: [infoEmbed] });
+                        }
                         break;
                     case 'list':
                         clanResult = await clanHandlers.handleClanList();
@@ -218,7 +226,7 @@ async function handleSlashCommand(interaction) {
                     }
                     await modifyInventory(user.id, 'trait_reforger', -1);
                     const newTraits = [rollNewTrait(), rollNewTrait()];
-                    await updateAccount(account._id, { 'traits.slots': newTraits });
+                    await updateAccount(account._id, { traits: { slots: newTraits } });
 
                     const successEmbed = new EmbedBuilder().setColor('#57F287').setTitle('✨ Traits Reforged!');
                     const traitFields = newTraits.map(trait => {
