@@ -150,20 +150,18 @@ async function handleClanInfo(clanCode) {
         return memberAccount?._id === clan.ownerId ? `👑 ${name}` : `- ${name}`;
     }).join('\n');
 
-    // Return an object that can be used to build an embed
-    return {
-        success: true,
-        embedData: {
-            title: `${clan.name} [Lv ${clan.level}]`,
-            description: `**Code:** \`{${clan.code}}\`\n**Leader:** ${ownerName}`,
-            fields: [
-                { name: 'Recruitment', value: status, inline: true },
-                { name: 'Members', value: `${clan.members.length}/${CLAN_MEMBER_LIMIT}`, inline: true },
-                { name: 'Progress', value: progressText, inline: false },
-                { name: 'Roster', value: memberList.length > 0 ? memberList : "No members found.", inline: false },
-            ]
-        }
-    };
+    const embed = new EmbedBuilder()
+        .setTitle(`${clan.name} [Lv ${clan.level}]`)
+        .setColor('#3498DB')
+        .setDescription(`**Code:** `{${clan.code}}\`\n**Leader:** ${ownerName}`)
+        .addFields(
+            { name: 'Recruitment', value: status, inline: true },
+            { name: 'Members', value: `${clan.members.length}/${CLAN_MEMBER_LIMIT}`, inline: true },
+            { name: 'Progress', value: progressText, inline: false },
+            { name: 'Roster', value: memberList.length > 0 ? memberList : "No members found.", inline: false }
+        );
+
+    return { success: true, embed: embed };
 }
 async function handleClanList() {
     const clans = getClansCollection();
